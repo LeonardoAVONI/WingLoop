@@ -1,0 +1,14 @@
+Metric,Value
+starting_time,0.6310744285583496
+first_iterations_time,1.049041748046875e-05
+middle_iterations_time,14.525206804275513
+final_iterations_time,0.049424171447753906
+closing_time,8.332476139068604
+total_time,23.5381977558136
+counter,299
+write_data_from_aswing_time,14.489407062530518
+process_data_from_aswing_time,0.04581761360168457
+compute_PID_instructions_time,0.001781463623046875
+write_flap_commands_time,0.022572755813598633
+compute_K_iterations_time,0.0030465126037597656
+full_iteration_time,14.563457012176514

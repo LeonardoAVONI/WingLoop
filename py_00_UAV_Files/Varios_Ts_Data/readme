@@ -1,0 +1,44 @@
+The following folder contains the .bin data for various numpy vectors describing Pitch(Time) for various scenarios
+Here, the following Python PID has been used:
+	Kp = 7.75  [-]
+	Ti = 0.275 [s]
+	Td = 0.0625 [s]
+	No "anti-windup"
+	No fixed initial aileron deflection
+	K was set to 1
+	No ground effect
+	Aileron deflection limited to pm10 [°]
+Ts was made variable in order to assess its impact on the control specifics
+A 1-cosine with the following parameters has been used
+	 5	! 1-cosine vertical gust
+	-15	! horizontal distance over x until beginning of gust (starts after 0.5s)
+	 0 	! coefficient for y slope
+	 15	! Horizontal gust length H (full rise at 1s from simulation beginning)
+	 3	! Wmax
+	 0
+The controlled system was the 00_Hawk_V0.asw, a 4m-wingspan rigid aircraft. All aileron deflections were set to the leveled flight trimming configuration, except the elevator, i.e. F2, that was made to control the pitch:
+	Pitch = 0.5706 [°]
+	Engine = 7.559 [N] (trimmed for 30m/s)
+At the beginning of the simulation, the PID must "build" its integral term, thus leading to a small jump in the aileron deflection, later stabilizing at the trimming point position i.e. 1.479 [°]
+Flight parameters were set to default
+
+The following configurations were tested:
+	Conv_6 Ts 0.005 N 300
+	Conv_5 Ts 0.01  N 150
+	Conv_4 Ts 0.02  N 75
+	Conv_3 Ts 0.03  N 50
+	Conv_2 Ts 0.05  N 30
+	Conv_1 Ts 0.1   N 15
+	
+We decided to plot the following quantities
+	pitch [°]
+	velocity [m/s]
+	aoa [°]
+	z position [m]
+We noticed the folllowing quantities to stay constant (reasonable because longitudinal dynamics only)
+	sideslip
+	y position (Earth)
+	yaw
+	roll
+Concerning x position (Earth), we decided that since the velocity and the pitch were already available, and roll and yaw were zero, ant there were no horizontal wind, then it would be redundant
+
