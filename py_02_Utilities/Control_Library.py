@@ -1,12 +1,12 @@
 """
 ====================================================================================
-Control_Library, Version 2
+Control_Library, Version 3
 
 Author: Leonardo AVONI
 Date: 08/11/2024
 Email: avonileonardo@gmail.com
 
-Last modified: 08/11/2024
+Last modified: 04/12/2024
 
 ====================================================================================
 
@@ -27,7 +27,7 @@ Comments:
 Changelog:
 - Version 1 (08/11/2024): creation of the code
 - Version 2 (03/12/2024): clean version of the code, for Github
-
+- Version 3 (04/12/2024): more comments
 
 ====================================================================================
 """
@@ -37,6 +37,13 @@ import matplotlib.pyplot as plt
 from scipy.integrate import trapezoid
 
 class PIDController:
+    """ 
+    Class defining a PID controller, defined with Kp, Ki and Kd
+    
+    The control instructions are then iterated in the time domain using discretization (Ts), written manually
+    
+    """
+    
     def __init__(self, Kp, Ki, Kd):
         # Initialize PID gains (as adimensional gains K's)
         self.Kp = Kp
@@ -82,11 +89,13 @@ class PIDController:
         return Out
 
 class Control:
+    
+    """
+    Control class, containing the various control laws and history tracking of the variables used in Python
+    """
     def __init__(self,K,Ti,Td):
         
-        """
-        Control calss, containing the various control laws and history tracking of the variables used in Python
-        """
+
 
         # Dynamic Tracking Variables
         self.TIME = None
@@ -158,7 +167,7 @@ class Control:
         """
         Example of a control law used for the current UAV:
             PID in pitch tracking (using a PID) and fixed velocity
-            Limitations in possible aileron deflections
+            Limitations in possible aileron deflections  (pm 10 degrees)
         """
 
         command_data = {}
