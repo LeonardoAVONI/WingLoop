@@ -186,7 +186,7 @@ if K !=1: #for K=10
     p_i=0.5  # [s]
     p_d=0.1 # [s]
 
-ASW_handler = Aswing_Director(aswing_path="/home/daep/l.avoni/Documents/Aswing_V2/bin/")
+ASW_handler = Aswing_Director(aswing_path="/home/daep/l.avoni/Bureau/02 ASWING/Aswing_V2/bin/")
 ASW_handler.start_aswing(directory="py_00_UAV_Files",filename=filename_string,print_output=print_output_or_not)
 
 # Deactivate Graphics

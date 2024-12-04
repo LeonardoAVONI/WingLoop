@@ -62,7 +62,7 @@ from queue import Queue, Empty
 
 
 class Aswing_Director:
-    def __init__(self, aswing_path="/home/daep/l.avoni/Documents/Aswing_R_5_98/bin/",wait_time=0.030):
+    def __init__(self, aswing_path="/home/daep/l.avoni/Bureau/02 ASWING/Aswing_R_5_98/bin/",wait_time=0.030):
         self.aswing_path = aswing_path
         self.asw_process = None
         self.stdout_queue = Queue() #where outputs are written
