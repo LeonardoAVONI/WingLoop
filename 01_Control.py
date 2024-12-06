@@ -96,8 +96,16 @@ def py_01_Performing_K_iterations_ASWING(count, Aswing_handler, Matlab_handler, 
         stdout, stderr = Aswing_handler.send_command_and_receive("W", print_output=print_setting,custom_timer=ttimer) # write the data
         # remove the older output file
         os.remove("output")
-       #send write command and wait for the file being finished writing (Wait until file has stabilized in size)
+        
+        # instead of removing the file, we try to overwrite its content, see if we change the time taken
+        #send write command and wait for the file being finished writing (Wait until file has stabilized in size)
         stdout, stderr , time_taken= Aswing_handler.send_writefile_command_and_receive(filename="output", print_output=print_setting, custom_timer=ttimer,check_timestep=ttimer_check) # , check_timestep=0.05
+
+        #stdout, stderr , time_taken= Aswing_handler.send_writefile_command_and_receive(filename="output", print_output=print_setting, 
+        #                                                                               custom_timer=ttimer,check_timestep=ttimer_check,
+        #                                                                               append_or_overwrite="O") # , check_timestep=0.05
+
+
 
     internal_times["write_data_from_aswing_time"] += time.time()-buffer_1
     internal_times["compute_K_iterations_time"] += buffer_1-start_time_internal

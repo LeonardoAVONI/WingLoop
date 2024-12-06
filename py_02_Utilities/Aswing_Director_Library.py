@@ -165,7 +165,7 @@ class Aswing_Director:
                 pass
         return ''.join(standard_output), ''.join(error_output)
 
-    def send_writefile_command_and_receive(self, filename, print_output=1, custom_timer=None, check_timestep=0.001):
+    def send_writefile_command_and_receive(self, filename, print_output=1, custom_timer=None, check_timestep=0.001, append_or_overwrite = None):
         """
         returns the outputs of the "send_command_and_receive" function, as well as the time taken for the function to do its job;
         keep in mind that here the time measured is not the real time, since aswing runs in parallel to python most of the time
@@ -176,9 +176,13 @@ class Aswing_Director:
         tt=custom_timer
         pp=print_output
         a,b = self.send_command_and_receive(filename, print_output=pp, custom_timer=tt)
-        # test
-        #time.sleep()
         
+        # provide the possibility to append or overwrite the output file, instead of deleting it each time
+        if append_or_overwrite:
+            c,d = self.send_command_and_receive(append_or_overwrite, print_output=pp, custom_timer=tt)            
+            # storing the output here, for the output
+            a = a+c
+            b = b+d       
         
         timeout=5
         last_size = -1
