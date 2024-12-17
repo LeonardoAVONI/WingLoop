@@ -202,7 +202,6 @@ class Aswing_Director:
             if os.path.exists(filename):
                 #current_size = os.path.getsize(file_path)
                 current_size = os.stat(filename).st_size
-                #print(current_size)
                 if current_size == last_size:
                     #checking if the file has actually something written inside
                     if current_size>0:

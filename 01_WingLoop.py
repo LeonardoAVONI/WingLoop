@@ -93,21 +93,31 @@ def py_01_Performing_K_iterations_ASWING(count, Aswing_handler, Matlab_handler, 
     x_command="x input"
 
     buffer_1 = time.time()
-    if True: #writing the state file or not?
-        # write the current state (from the written file, because it has everything inside) i.e. current output file
-        stdout, stderr = Aswing_handler.send_command_and_receive("W", print_output=print_setting,custom_timer=ttimer) # write the data
-        # remove the older output file
-        os.remove("output")
-        
-        # instead of removing the file, we try to overwrite its content, see if we change the time taken
-        #send write command and wait for the file being finished writing (Wait until file has stabilized in size)
-        stdout, stderr , time_taken= Aswing_handler.send_writefile_command_and_receive(filename="output", print_output=print_setting, custom_timer=ttimer,check_timestep=ttimer_check) # , check_timestep=0.05
+    
+    """
+    Several options are available concerning the state file written by ASWING
+        delete: this option deletes the older "output" file, so the new one has no problems being written
+        overwrite: this method overwrites current "output" file
+        none: this method does not write any file. It can be used for time testing
+    """
+    
+    state_file_write_options = "overwrite"
+    
 
-        #stdout, stderr , time_taken= Aswing_handler.send_writefile_command_and_receive(filename="output", print_output=print_setting, 
-        #                                                                               custom_timer=ttimer,check_timestep=ttimer_check,
-        #                                                                               append_or_overwrite="O") # , check_timestep=0.05
+    
+    if state_file_write_options is not "none": 
+        if state_file_write_options == "delete":
+            stdout, stderr = Aswing_handler.send_command_and_receive("W", print_output=print_setting,custom_timer=ttimer) # write the data
+            os.remove("output")
+            stdout, stderr , time_taken= Aswing_handler.send_writefile_command_and_receive(filename="output", print_output=print_setting, custom_timer=ttimer,check_timestep=ttimer_check) # , check_timestep=0.05
 
-
+        if state_file_write_options == "overwrite": 
+            stdout, stderr = Aswing_handler.send_command_and_receive("W", print_output=print_setting,custom_timer=ttimer) # write the data
+            with open('output', 'w') as file: #deletes the previously written data from the output file, it now will have a length 0
+                pass
+            while os.stat("output").st_size: #checkig that the file is still there, but his content has been deleted
+                time.sleep(0.0000001)
+            stdout, stderr , time_taken= Aswing_handler.send_writefile_command_and_receive(filename="output", print_output=print_setting, custom_timer=ttimer,check_timestep=ttimer_check , append_or_overwrite="O") # , check_timestep=0.05
 
     internal_times["write_data_from_aswing_time"] += time.time()-buffer_1
     internal_times["compute_K_iterations_time"] += buffer_1-start_time_internal
@@ -163,7 +173,7 @@ script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
 os.chdir(script_dir)
 
 #in case we want to show script output
-print_output_or_not=1
+print_output_or_not=0
 
 #in case we want to use matlab (1) or python (0) for control
 use_matlab=0
@@ -315,7 +325,7 @@ if not use_matlab:
 print("Finishing the Program")
 time.sleep(0.5)
 # removing the communication files
-if True:
+if False:
     os.remove("output")
     os.remove("input")
 # closing the matlab engine
