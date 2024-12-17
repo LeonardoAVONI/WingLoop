@@ -1,12 +1,12 @@
 """
 ====================================================================================
-Control_Library, Version 3
+Control_Library, Version 4
 
 Author: Leonardo AVONI
 Date: 08/11/2024
 Email: avonileonardo@gmail.com
 
-Last modified: 04/12/2024
+Last modified: 17/12/2024
 
 ====================================================================================
 
@@ -28,6 +28,7 @@ Changelog:
 - Version 1 (08/11/2024): creation of the code
 - Version 2 (03/12/2024): clean version of the code, for Github
 - Version 3 (04/12/2024): more comments
+- Version 4 (17/12/2024): added a PID that used Wy from ASWING
 
 ====================================================================================
 """
@@ -77,7 +78,9 @@ class PIDController:
         #Out_I = self.Previous_I_output - self.Ki*Ts*0.5*(self.Current_Error+self.Previous_Error) #trapezoidal WRONG
         #Out_I = self.Previous_I_output - self.Ki*Ts*self.Current_Error #forward WRONG
         #Out_I = self.Previous_I_output - self.Ki*Ts*self.Current_Error #backward WRONG
-        Out_I = self.Previous_I_output + self.Ki * Ts * 0.5 * (self.Current_Error + self.Previous_Error) #chatgpt
+        #Out_I = self.Previous_I_output + self.Ki * Ts * 0.5 * (self.Current_Error + self.Previous_Error) #chatgpt
+        Out_I = self.Previous_I_output + self.Ki * Ts*self.Current_Error # version for ASWING validation
+        
         # summing up the contributions
         Out=Out_P+Out_D+Out_I
 
@@ -87,6 +90,30 @@ class PIDController:
         self.Previous_Error = self.Current_Error
 
         return Out
+
+    def runPID_continuousWy(self,measured_variable,measured_derivative,setpoint_variable,Ts):
+        
+        self.Current_Error = setpoint_variable - measured_variable
+
+        # proportional term
+        Out_P = self.Kp*self.Current_Error
+
+        # derivative term
+        Out_D = self.Kd*(0-measured_derivative)
+
+        # integral term
+        Out_I = self.Previous_I_output + self.Ki * Ts*self.Current_Error # version for ASWING validation
+        #Out_I = self.Previous_I_output + self.Ki * Ts * 0.5 * (self.Current_Error + self.Previous_Error) #chatgpt
+        
+        # summing up the contributions
+        Out=Out_P+Out_D+Out_I
+
+        # updating the variables value
+        self.Previous_D_output = Out_D
+        self.Previous_I_output = Out_I
+        self.Previous_Error = self.Current_Error
+
+        return Out , Out_I
 
 class Control:
     
@@ -115,6 +142,7 @@ class Control:
         # Global variables specific to the control strategy: we define one instance of the PID class
         self.Alt_Contr = PIDController(Kp=K, Ki=K/Ti, Kd=K*Td) #K/Ti
 
+        self.Integrator = np.array([None])
 
     def append_flight_data(self, instantaneous_struct):
         
@@ -143,6 +171,8 @@ class Control:
             self.VELOCITY = np.array([instantaneous_struct["Velocity"]])
 
             self.F2 = np.array([instantaneous_struct["F2"]])
+            
+            self.Wy = np.array([instantaneous_struct["Wy"]])
 
         else:
             # If they are initialized, append the new values
@@ -162,6 +192,7 @@ class Control:
 
             self.F2 = np.append(self.F2, instantaneous_struct["F2"])
 
+            self.Wy = np.append(self.Wy, instantaneous_struct["Wy"])
     
     def UAV_control_Strategy(self,instantaneous_flight_data, Dt):
         """
@@ -178,16 +209,25 @@ class Control:
         if selection == "V0":
             command_data["E1"]=7.559
             command_data["Pitch"]=0.5706
+            command_data["Trimmed_F2"]=1.47927
         if selection == "V2":
             command_data["E1"]=7.573
             command_data["Pitch"]=0.5067
+            command_data["Trimmed_F2"]=1.65895
 
         current_time=instantaneous_flight_data["Time"]
         #if current_time>0:
         #    command_data["Pitch"]=5
 
-        Elevator_out = self.Alt_Contr.runPID(instantaneous_flight_data["Pitch"],command_data["Pitch"],Dt)
-
+        #Elevator_out = self.Alt_Contr.runPID(instantaneous_flight_data["Pitch"],command_data["Pitch"],Dt)
+        Elevator_out , integrator = self.Alt_Contr.runPID_continuousWy(instantaneous_flight_data["Pitch"],instantaneous_flight_data["Wy"],command_data["Pitch"],Dt)
+        #integrator =0
+        
+        if self.Integrator[0] is None:
+            self.Integrator = np.array([0])
+        else:
+            self.Integrator = np.append(self.Integrator, integrator)
+        
         # Sending the final instructions
         output = {}
         output["F1"]= 0
@@ -287,6 +327,10 @@ class Control:
         # Adjust layout
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         plt.show()
+
+    def write_to_file(self):
+        np.savez("00_python_data.npz", TIME=self.TIME, ALPHA=self.ALPHA, VELOCITY=self.VELOCITY, PITCH=self.PITCH, F2=self.F2, Integrator = self.Integrator)
+    
 
     def obtain_the_metrics(self):
         

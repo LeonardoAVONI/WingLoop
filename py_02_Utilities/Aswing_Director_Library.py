@@ -1,12 +1,12 @@
 """
 ====================================================================================
-Aswing Director, Version 8
+Aswing Director, Version 9
 
 Author: Leonardo AVONI
 Date: 21/10/2024
 Email: avonileonardo@gmail.com
 
-Last modified: 03/12/2024
+Last modified: 17/12/2024
 
 ====================================================================================
 
@@ -50,6 +50,7 @@ Changelog:
     for the file to be finished writing
 - Version 7 (06/11/2024): added customizable check_timestep in "send_writefile_command_and_receive"
 - Version 8 (03/12/2024): minor comments made
+- Version 9 (17/12/2024): added file length check (>0) in "send_writefile_command_and_receive"
 ====================================================================================
 """
 
@@ -203,8 +204,10 @@ class Aswing_Director:
                 current_size = os.stat(filename).st_size
                 #print(current_size)
                 if current_size == last_size:
-                    condition=0
-                    break
+                    #checking if the file has actually something written inside
+                    if current_size>0:
+                        condition=0
+                        break
                 last_size = current_size
             time.sleep(check_timestep)  # Check every 1 ms
             #print(check_timestep)

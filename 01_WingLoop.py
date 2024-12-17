@@ -1,12 +1,12 @@
 """
 ====================================================================================
-Controlled Flight Text, Version 1
+Controlled Flight Text, Version 2
 
 Author: Leonardo AVONI
 Date: 25/10/2024
 Email: avonileonardo@gmail.com
 
-Last modified: 03/12/2024
+Last modified: 17/12/2024
 quick test
 ====================================================================================
 
@@ -34,6 +34,8 @@ Features:
 -control in matlab and python
 -Aswing_V2 use (modified to go beyond 201 op.points limit)
 -time measurements (to check which part of the code take how much time)
+-added the possibility to use angular velocity from ASWING, and increased read/write precision using ASWING V3
+-added ASWING output file checks, avoiding crashes
 
 Next improvements:
 -Simulink Bridge
@@ -52,7 +54,7 @@ import matlab.engine #executing this line steals a bit of time
 import threading
 from queue import Queue, Empty
 from py_02_Utilities.Aswing_Director_Library import Aswing_Director
-from py_02_Utilities.text2python_library import text2python_main, python2text
+from py_02_Utilities.text2python_library import text2python_main, python2text, text2python_withderivative
 from py_02_Utilities.Control_Library import Control
 import sys
 
@@ -113,8 +115,9 @@ def py_01_Performing_K_iterations_ASWING(count, Aswing_handler, Matlab_handler, 
     
     # writing a dictionary containing the flight data specifics
     
-    instantaneous_flight_data = text2python_main("output")
-    #print(instantaneous_flight_data)
+    #instantaneous_flight_data = text2python_main("output")
+    instantaneous_flight_data = text2python_withderivative("output")    
+    print(instantaneous_flight_data)
     # writing flight data to python workspace database, not updated
     
     if Matlab_handler is None:
@@ -194,7 +197,7 @@ if K !=1: #for K=10
     p_i=0.5  # [s]
     p_d=0.1 # [s]
 
-ASW_handler = Aswing_Director(aswing_path="/home/daep/l.avoni/Bureau/02_ASWING/Aswing_V2/bin/")
+ASW_handler = Aswing_Director(aswing_path="/home/daep/l.avoni/Bureau/02_ASWING/Aswing_V3/bin/")
 ASW_handler.start_aswing(directory="py_00_UAV_Files",filename=filename_string,print_output=print_output_or_not)
 
 # Deactivate Graphics
@@ -303,8 +306,8 @@ buffertime = time.time()
 
 if not use_matlab:
     python_control.plot_the_data()
-    score_new = python_control.obtain_the_metrics()
-    print("SCORE: ",score_new)
+    #score_new = python_control.obtain_the_metrics()
+    #print("SCORE: ",score_new)
     pass
 
 
@@ -312,12 +315,31 @@ if not use_matlab:
 print("Finishing the Program")
 time.sleep(0.5)
 # removing the communication files
-if False:
+if True:
     os.remove("output")
     os.remove("input")
 # closing the matlab engine
 if use_matlab:
     matlab_engine.quit() 
+
+# writing an output timeseries for various variables
+if True:
+    stdout, stderr = ASW_handler.send_command_and_receive("P" , print_output=print_output_or_not)
+    stdout, stderr = ASW_handler.send_command_and_receive("S" , print_output=print_output_or_not)
+    stdout, stderr = ASW_handler.send_command_and_receive("11" , print_output=print_output_or_not)
+    stdout, stderr = ASW_handler.send_command_and_receive("20" , print_output=print_output_or_not)
+    stdout, stderr = ASW_handler.send_command_and_receive("17" , print_output=print_output_or_not)
+    stdout, stderr = ASW_handler.send_command_and_receive("66" , print_output=print_output_or_not)
+    stdout, stderr = ASW_handler.send_command_and_receive("55" , print_output=print_output_or_not)
+    stdout, stderr = ASW_handler.send_command_and_receive("68" , print_output=print_output_or_not)
+    stdout, stderr = ASW_handler.send_command_and_receive("\t" , print_output=print_output_or_not)
+    stdout, stderr = ASW_handler.send_command_and_receive("\t" , print_output=print_output_or_not)
+    stdout, stderr = ASW_handler.send_command_and_receive("W" , print_output=print_output_or_not)
+    stdout, stderr = ASW_handler.send_command_and_receive("timeseries_WingLoop" , print_output=print_output_or_not)
+
+# write a backup
+#stdout, stderr = ASW_handler.send_command_and_receive("\n" , print_output=print_output_or_not)  # go back to main menu
+#stdout, stderr = ASW_handler.send_command_and_receive("hsav backup.state" , print_output=print_output_or_not)  # go back to main menu
 
 stdout, stderr = ASW_handler.send_command_and_receive("\n" , print_output=print_output_or_not)  # go back to main menu
 # Quit Aswing
@@ -329,14 +351,18 @@ times["total_time"] = time.time()-start_time
 print(times)
 print(internal_times)
 
+#writing the python data file to something python accessible
+python_control.write_to_file()
 
-with open('output_data.csv', 'w', newline='') as file:
-    writer = csv.writer(file)
-    
-    # Writing headers for the first dictionary
-    writer.writerow(['Metric', 'Value'])
-    for key, value in times.items():
-        writer.writerow([key, value])
+#write the data of the time taken by the code to a csv file
+if False:
+    with open('output_data.csv', 'w', newline='') as file:
+        writer = csv.writer(file)
+        
+        # Writing headers for the first dictionary
+        writer.writerow(['Metric', 'Value'])
+        for key, value in times.items():
+            writer.writerow([key, value])
 
-    for key, value in internal_times.items():
-        writer.writerow([key, value])
+        for key, value in internal_times.items():
+            writer.writerow([key, value])

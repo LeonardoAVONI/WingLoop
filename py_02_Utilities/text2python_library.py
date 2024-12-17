@@ -1,12 +1,12 @@
 """
 ====================================================================================
-test2python_library, Version 2
+test2python_library, Version 6
 
 Author: Leonardo AVONI
 Date: 25/10/2024
 Email: avonileonardo@gmail.com
 
-Last modified:  03/12/2024
+Last modified:  17/12/2024
 
 ====================================================================================
 
@@ -37,6 +37,7 @@ Changelog:
 - Version 4 (30/10/2024): only text2python_main function was kept, 
     the others were commented
 - Version 5 (03/12/2024): made better comments for the code to be put on Github
+- Version 6 (17/12/2024): added a check, called safe_read_and_extract to see if the output file from ASWING is actually complete or not
 
 Possible improvements:
     Making the class independent to the type of UAV used 
@@ -52,6 +53,7 @@ import os
 import mmap
 import warnings
 from itertools import islice
+import sys
 
 
 def extract_value(label, text):
@@ -76,21 +78,84 @@ def seconds2hms(seconds):
     remaining_seconds = np.round(seconds % 60)
     return hours, minutes, remaining_seconds
 
+def safe_read_and_extract(name, fields, retries=3, delay=0.01):
+    file_read_correctly = False
+    for attempt in range(retries):
+        with open(name, "r") as document:
+            text = document.read()
+        extracted_values = {field: extract_value(field, text) for field in fields}
+        
+        # Check if extracted values are all None
+        if all(value is not None for value in extracted_values.values()):
+            file_read_correctly = True
+            break
+        else:
+            print(f"Attempt {attempt+1}/{retries} failed")
+            time.sleep(delay)  # Wait before retrying
+            
+    # Finish
+    if file_read_correctly:
+        # no problems, we can return the content
+        return extracted_values
+    else:
+        print("Failed to read valid values after retries.")
+        print("INEXISTENT ASWING DATA, problems during file reading, check the file written by ASWING")
+        sys.exit()
+
+
 def text2python_main(name):
     """
     opens a text document called "name", then extracts from it all the values written in "fields" from such document
     (we assume the document to be created from OPER)
     then, the values are extracted and stored in a dictionary called "extracted_values"
     """
-    with open(name, "r") as document:
-        text = document.read()
+    #with open(name, "r") as document:
+    #    text = document.read()
     #print(text)
 
     # List of fields to extract
     fields = ['Time','earth X','earth Y','earth Z','Heading', 'Elev.', 'Bank','Alpha','Beta','Velocity','Flap 2']
 
     # Extract the values for each field
-    extracted_values = {field: extract_value(field, text) for field in fields}
+    #extracted_values = {field: extract_value(field, text) for field in fields}
+    
+    extracted_values = safe_read_and_extract(name, fields)
+
+    # Rename keys using a mapping
+    key_mapping = {
+        'earth X': 'earthX',
+        'earth Y': 'earthY',
+        'earth Z': 'earthZ',
+        'Elev.': 'Pitch',
+        'Flap 2': 'F2',
+    }
+
+    # Update the dictionary with the new key names
+    for old_key, new_key in key_mapping.items():
+        if old_key in extracted_values:
+            extracted_values[new_key] = extracted_values.pop(old_key)
+
+    extracted_values=convert_extracted_values(extracted_values)
+
+    return extracted_values
+
+def text2python_withderivative(name):
+    """
+    opens a text document called "name", then extracts from it all the values written in "fields" from such document
+    (we assume the document to be created from OPER)
+    then, the values are extracted and stored in a dictionary called "extracted_values"
+    """
+    #with open(name, "r") as document: 
+    #    text = document.read() 
+    #print(text)
+
+    # List of fields to extract
+    fields = ['Time','earth X','earth Y','earth Z','Heading', 'Elev.', 'Bank','Alpha','Beta','Velocity','Flap 2','Wy']
+
+    # Extract the values for each field
+    #extracted_values = {field: extract_value(field, text) for field in fields} #here None is already there everywhere 
+
+    extracted_values = safe_read_and_extract(name, fields)
 
     # Rename keys using a mapping
     key_mapping = {
@@ -136,8 +201,8 @@ def convert_extracted_values(extracted_values):
             extracted_values[key] = scientific_to_decimal(str(value))
         
         if extracted_values[key] is None:
-            warnings.warn('INEXISTENT ASWING DATA: probable Newton iterations convergence problems')
-            extracted_values[key] = 10000000000
+            warnings.warn('INEXISTENT ASWING DATA, problems during file conversion, check the file written by ASWING')
+            #extracted_values[key] = 10000000000
         else:
             extracted_values[key] = float(extracted_values[key]) #convert to float
     return extracted_values
@@ -175,8 +240,15 @@ def python2text(filename, control):
     # is written in one single time, so its not really useful
 
 if __name__=="__main__":
-    a = scientific_to_decimal(1E5)
-    print(a+"ciao")
+    """
+    for i in range(1000000):
+        print("Iteration ", i)
+        instantaneous_flight_data = text2python_withderivative("output_6_1999_crash")
+        print(instantaneous_flight_data)
+    """
+    ff = ['Time','earth X','earth Y','earth Z','Heading', 'Elev.', 'Bank','Alpha','Beta','Velocity','Flap 2','Wy']
+    test = safe_read_and_extract("test",ff)
+    print(test)
 
 """
 
