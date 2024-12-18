@@ -342,7 +342,7 @@ if not use_matlab:
 print("Finishing the Program")
 time.sleep(0.5)
 # removing the communication files
-if False:
+if True:
     os.remove("output")
     os.remove("input")
 # closing the matlab engine
