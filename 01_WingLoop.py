@@ -238,7 +238,7 @@ The trimmed .state file, for the moment, must be created manually
 # Setting up the Beginning of the Resolution: the trimmed state
 stdout, stderr = ASW_handler.send_command_and_receive("tget "+filename_string+"_leveled_30.state", print_output=print_output_or_not) # load the constraints fand trimmed state
 # Importing the settings needed for the OPER resolution
-#stdout, stderr = ASW_handler.send_command_and_receive("sget 01_fast_settings.set", print_output=print_output_or_not) # load the settings to be used in OPER
+stdout, stderr = ASW_handler.send_command_and_receive("sget 01_fast_settings.set", print_output=print_output_or_not) # load the settings to be used in OPER
 # Importing the gust needed
 stdout, stderr = ASW_handler.send_command_and_receive("gget 01_1minus_cosine.gust", print_output=print_output_or_not) # load the gust (1-cosine)
 # Set altitude units (from ground) to km instead of kilofeet
@@ -350,7 +350,7 @@ if use_matlab:
     matlab_engine.quit() 
 
 # writing an output timeseries for various variables
-if True:
+if False:
     stdout, stderr = ASW_handler.send_command_and_receive("P" , print_output=print_output_or_not)
     stdout, stderr = ASW_handler.send_command_and_receive("S" , print_output=print_output_or_not)
     stdout, stderr = ASW_handler.send_command_and_receive("11" , print_output=print_output_or_not)
@@ -382,7 +382,7 @@ print(internal_times)
 python_control.write_to_file()
 
 #write the data of the time taken by the code to a csv file
-if True:
+if False:
     with open('output_data.csv', 'w', newline='') as file:
         writer = csv.writer(file)
         
