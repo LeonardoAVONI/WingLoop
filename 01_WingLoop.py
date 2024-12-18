@@ -59,6 +59,7 @@ from py_02_Utilities.Control_Library import Control
 import sys
 
 times = {}
+global internal_times
 internal_times = {}
 internal_times["counter"]=0
 internal_times["write_data_from_aswing_time"]=0
@@ -71,6 +72,8 @@ internal_times["full_iteration_time"] = 0
 start_time = time.time()
 
 def py_01_Performing_K_iterations_ASWING(count, Aswing_handler, Matlab_handler, Python_handler, Dt_aswing, K_aswing, print_setting, ttimer, ttimer_check):
+    #global last_modification_time
+    global internal_times
 
     """
     Works from the Oper menu, made to append K_aswing iterations with control to current simulation
@@ -91,21 +94,21 @@ def py_01_Performing_K_iterations_ASWING(count, Aswing_handler, Matlab_handler, 
     else:
         command=str(Dt_aswing)+" "+str(K_aswing)
     x_command="x input"
-
-    buffer_1 = time.time()
     
     """
     Several options are available concerning the state file written by ASWING
         delete: this option deletes the older "output" file, so the new one has no problems being written
         overwrite: this method overwrites current "output" file
         none: this method does not write any file. It can be used for time testing
+    
+    note that time.sleep() are needed lower in the code if "none" is used
     """
     
-    state_file_write_options = "overwrite"
+    state_file_write_options = "delete"
     
 
     
-    if state_file_write_options is not "none": 
+    if state_file_write_options != "none": 
         if state_file_write_options == "delete":
             stdout, stderr = Aswing_handler.send_command_and_receive("W", print_output=print_setting,custom_timer=ttimer) # write the data
             os.remove("output")
@@ -113,14 +116,20 @@ def py_01_Performing_K_iterations_ASWING(count, Aswing_handler, Matlab_handler, 
 
         if state_file_write_options == "overwrite": 
             stdout, stderr = Aswing_handler.send_command_and_receive("W", print_output=print_setting,custom_timer=ttimer) # write the data
-            with open('output', 'w') as file: #deletes the previously written data from the output file, it now will have a length 0
-                pass
-            while os.stat("output").st_size: #checkig that the file is still there, but his content has been deleted
-                time.sleep(0.0000001)
+            if True: #deleting the content method
+                with open('output', 'w') as file: #deletes the previously written data from the output file, it now will have a length 0
+                    pass
+                while os.stat("output").st_size: #checkig that the file is still there, but his content has been deleted
+                    time.sleep(0.0000001)
+            else: #modification time based
+                print("THE OVERWRITE MODIFICATION, THAT RELIES ON CHECKING THE output FILE STATE (check if it was modified or not) ENDED UP NOT WORKING")
+                sys.exit()
+                #while os.stat("output").st_mtime == last_modification_time:
+                #    time.sleep(0.00001)
+                #last_modification_time = os.stat("output").st_mtime
             stdout, stderr , time_taken= Aswing_handler.send_writefile_command_and_receive(filename="output", print_output=print_setting, custom_timer=ttimer,check_timestep=ttimer_check , append_or_overwrite="O") # , check_timestep=0.05
 
-    internal_times["write_data_from_aswing_time"] += time.time()-buffer_1
-    internal_times["compute_K_iterations_time"] += buffer_1-start_time_internal
+    internal_times["write_data_from_aswing_time"] += time.time()-start_time_internal
     buffer_time_internal=time.time()
     
     # writing a dictionary containing the flight data specifics
@@ -160,7 +169,6 @@ def py_01_Performing_K_iterations_ASWING(count, Aswing_handler, Matlab_handler, 
     stdout, stderr = Aswing_handler.send_command_and_receive(command , print_output=print_setting,custom_timer=ttimer)
 
     internal_times["compute_K_iterations_time"] += time.time()-buffer_time_internal # time to compute K iterations
-    buffer_time_internal=time.time()
 
     internal_times["full_iteration_time"] +=time.time()-start_time_internal
     print(internal_times)
@@ -173,15 +181,15 @@ script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
 os.chdir(script_dir)
 
 #in case we want to show script output
-print_output_or_not=0
+print_output_or_not=1
 
 #in case we want to use matlab (1) or python (0) for control
 use_matlab=0
 
 # Simulation Specifics
-N = 200 # amount of time steps in ASWING, INTEGER larger than 1
+N = 300 # amount of time steps in ASWING, INTEGER larger than 1
 Dt = 0.01 # ASWING Time step [s]
-K = 1 # sendig the files to Matlab every K-th ASWING iteration, INTEGER
+K = 10 # sendig the files to Matlab every K-th ASWING iteration, INTEGER
 L = 1 #beginning iterations
 
 # timer used by default for the Aswing_Director functions
@@ -230,7 +238,7 @@ The trimmed .state file, for the moment, must be created manually
 # Setting up the Beginning of the Resolution: the trimmed state
 stdout, stderr = ASW_handler.send_command_and_receive("tget "+filename_string+"_leveled_30.state", print_output=print_output_or_not) # load the constraints fand trimmed state
 # Importing the settings needed for the OPER resolution
-stdout, stderr = ASW_handler.send_command_and_receive("sget 01_fast_settings.set", print_output=print_output_or_not) # load the settings to be used in OPER
+#stdout, stderr = ASW_handler.send_command_and_receive("sget 01_fast_settings.set", print_output=print_output_or_not) # load the settings to be used in OPER
 # Importing the gust needed
 stdout, stderr = ASW_handler.send_command_and_receive("gget 01_1minus_cosine.gust", print_output=print_output_or_not) # load the gust (1-cosine)
 # Set altitude units (from ground) to km instead of kilofeet
@@ -263,6 +271,11 @@ stdout, stderr = ASW_handler.send_command_and_receive("x", print_output=print_ou
 #create a dummy output file
 if not os.path.exists("output"):
     open("output", "w")
+# the following comments concern a version based with overwrite, that is working badly
+#with open('output', 'w') as file: 
+#    pass
+#global last_modification_time 
+#last_modification_time = -1
 
 if use_matlab:
     #starting Matlab
@@ -288,6 +301,10 @@ counter=L
 
 times["first_iterations_time"] = time.time()-buffertime
 buffertime = time.time()
+
+# timer to be used in case state_file_write_options = none
+#timer_text=0.018 # for K=1
+#timer_text=0.19 # for K=10
 
 ### PERFORMING ALL INTERMEDIATE ITERATIONS (between L and N)
 while not (counter + K >= N):
@@ -365,7 +382,7 @@ print(internal_times)
 python_control.write_to_file()
 
 #write the data of the time taken by the code to a csv file
-if False:
+if True:
     with open('output_data.csv', 'w', newline='') as file:
         writer = csv.writer(file)
         

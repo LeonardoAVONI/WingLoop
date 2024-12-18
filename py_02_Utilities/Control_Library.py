@@ -267,7 +267,7 @@ class Control:
         # Create a figure and a grid of subplots
         fig, axs = plt.subplots(4, 1, figsize=(10, 15))
         fig.suptitle('Various Data Over Time', fontsize=16)
-
+        #print(self.TIME)
         # Plot PITCH, ROLL, YAW over TIME
         axs[0].plot(self.TIME, self.PITCH, label='Pitch', color='blue')
         axs[0].plot(self.TIME, self.ROLL, label='Roll', color='green')
