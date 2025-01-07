@@ -303,7 +303,7 @@ times["first_iterations_time"] = time.time()-buffertime
 buffertime = time.time()
 
 # timer to be used in case state_file_write_options = none
-timer_text=0.023 # for K=1 charged
+#timer_text=0.023 # for K=1 charged
 #timer_text=0.21 # for K=10 charged
 #timer_text=0.025 # for K=1 non charged
 #timer_text=0.26 # for K=10 non charged
