@@ -103,7 +103,7 @@ def py_01_Performing_K_iterations_ASWING(count, Aswing_handler, Matlab_handler, 
     
     note that time.sleep() are needed lower in the code if "none" is used
     """
-    
+    # the best option for time speed is overwrite
     state_file_write_options = "overwrite"
     
 
