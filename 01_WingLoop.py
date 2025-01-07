@@ -104,7 +104,7 @@ def py_01_Performing_K_iterations_ASWING(count, Aswing_handler, Matlab_handler, 
     note that time.sleep() are needed lower in the code if "none" is used
     """
     
-    state_file_write_options = "delete"
+    state_file_write_options = "none"
     
 
     
@@ -189,7 +189,7 @@ use_matlab=0
 # Simulation Specifics
 N = 300 # amount of time steps in ASWING, INTEGER larger than 1
 Dt = 0.01 # ASWING Time step [s]
-K = 10 # sendig the files to Matlab every K-th ASWING iteration, INTEGER
+K = 1 # sendig the files to Matlab every K-th ASWING iteration, INTEGER
 L = 1 #beginning iterations
 
 # timer used by default for the Aswing_Director functions
@@ -238,7 +238,7 @@ The trimmed .state file, for the moment, must be created manually
 # Setting up the Beginning of the Resolution: the trimmed state
 stdout, stderr = ASW_handler.send_command_and_receive("tget "+filename_string+"_leveled_30.state", print_output=print_output_or_not) # load the constraints fand trimmed state
 # Importing the settings needed for the OPER resolution
-stdout, stderr = ASW_handler.send_command_and_receive("sget 01_fast_settings.set", print_output=print_output_or_not) # load the settings to be used in OPER
+#stdout, stderr = ASW_handler.send_command_and_receive("sget 01_fast_settings.set", print_output=print_output_or_not) # load the settings to be used in OPER
 # Importing the gust needed
 stdout, stderr = ASW_handler.send_command_and_receive("gget 01_1minus_cosine.gust", print_output=print_output_or_not) # load the gust (1-cosine)
 # Set altitude units (from ground) to km instead of kilofeet
@@ -303,8 +303,11 @@ times["first_iterations_time"] = time.time()-buffertime
 buffertime = time.time()
 
 # timer to be used in case state_file_write_options = none
-#timer_text=0.018 # for K=1
-#timer_text=0.19 # for K=10
+timer_text=0.023 # for K=1 charged
+#timer_text=0.21 # for K=10 charged
+#timer_text=0.025 # for K=1 non charged
+#timer_text=0.26 # for K=10 non charged
+
 
 ### PERFORMING ALL INTERMEDIATE ITERATIONS (between L and N)
 while not (counter + K >= N):
@@ -342,7 +345,7 @@ if not use_matlab:
 print("Finishing the Program")
 time.sleep(0.5)
 # removing the communication files
-if True:
+if False:
     os.remove("output")
     os.remove("input")
 # closing the matlab engine
@@ -350,7 +353,7 @@ if use_matlab:
     matlab_engine.quit() 
 
 # writing an output timeseries for various variables
-if False:
+if True:
     stdout, stderr = ASW_handler.send_command_and_receive("P" , print_output=print_output_or_not)
     stdout, stderr = ASW_handler.send_command_and_receive("S" , print_output=print_output_or_not)
     stdout, stderr = ASW_handler.send_command_and_receive("11" , print_output=print_output_or_not)
@@ -382,7 +385,7 @@ print(internal_times)
 python_control.write_to_file()
 
 #write the data of the time taken by the code to a csv file
-if False:
+if True:
     with open('output_data.csv', 'w', newline='') as file:
         writer = csv.writer(file)
         
