@@ -104,11 +104,11 @@ def py_01_Performing_K_iterations_ASWING(count, Aswing_handler, Matlab_handler, 
     note that time.sleep() are needed lower in the code if "none" is used
     """
     
-    state_file_write_options = "none"
+    state_file_write_options = "overwrite"
     
 
     
-    if state_file_write_options != "none": 
+    if state_file_write_options != "none":
         if state_file_write_options == "delete":
             stdout, stderr = Aswing_handler.send_command_and_receive("W", print_output=print_setting,custom_timer=ttimer) # write the data
             os.remove("output")
