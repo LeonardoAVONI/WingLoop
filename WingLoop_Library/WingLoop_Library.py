@@ -54,9 +54,9 @@ import time
 #import matlab.engine #executing this line steals a bit of time; it is needed if we want to bridge it with matlab
 import threading
 from queue import Queue, Empty
-from Aswing_Director_Library import Aswing_Director
-from Text2Python_Library import text2python_main, python2text, text2python_withderivative
-from Control_Library import PyControl
+from ASWING_Director_Library import Aswing_Director
+from WingLoop_Library.Text2Python_Library import text2python_main, python2text, text2python_withderivative
+from WingLoop_Library.Control_Library import PyControl
 import sys
 
 
@@ -68,7 +68,7 @@ class WingLoop:
         """
         pass
     
-    def Launch_ASWING(self,aswing_path,sim_directory,asw_filename,print_output,timer_text=0.0000001,finished_writing_check_timestep=0.001):
+    def Launch_ASWING(self,aswing_path,sim_directory,asw_filename,print_output,timer_text=0.000001,finished_writing_check_timestep=0.001):
         """_summary_
         aswing_path: path at the end of which there's the used ASWING executable to use
         sim_directory: directory where the simulation files are, with-respect-to current working directory
@@ -85,7 +85,7 @@ class WingLoop:
         # record the location of the initial path
         self.initial_path = os.getcwd()
         # change path to go to the sim_directory path
-        os.chdir(sim_directory)
+        #os.chdir(os.path.join(self.initial_path,sim_directory))
         # create an ASWING instance
         self.ASW_handler = Aswing_Director(aswing_path=aswing_path,
                                            wait_time=timer_text, 
@@ -176,7 +176,7 @@ class WingLoop:
             if state_file_write_options == "overwrite":
                 #deletes the previously written data from the output file, it 
                 # now will have a length 0 
-                stdout, stderr = self.Aswing_handler.send_command_and_receive("W",custom_timer=custom_timer) # write the data
+                stdout, stderr = self.ASW_handler.send_command_and_receive("W",custom_timer=custom_timer) # write the data
                 with open('output', 'w') as file: 
                     pass
                 #checkig that the file is still there, but his content has been deleted
@@ -196,7 +196,7 @@ class WingLoop:
                 """
                 # Now that we know the content of the previous input file was 
                 # deleted, we can write the next one inside it
-                stdout, stderr , time_taken= self.Aswing_handler.send_writefile_command_and_receive(filename="output",  
+                stdout, stderr , time_taken= self.ASW_handler.send_writefile_command_and_receive(filename="output",  
                                                                                                     custom_timer=custom_timer,
                                                                                                     append_or_overwrite="O")
         
@@ -216,8 +216,8 @@ class WingLoop:
         python2text("input",output)
 
         #perform K time iteration on aswing, using the input text file just written
-        stdout, stderr = self.Aswing_handler.send_command_and_receive(x_command, custom_timer=custom_timer) #create K_aswing iteration of the unsteady simulation
-        stdout, stderr = self.Aswing_handler.send_command_and_receive(command , custom_timer=custom_timer)
+        stdout, stderr = self.ASW_handler.send_command_and_receive(x_command, custom_timer=custom_timer) #create K_aswing iteration of the unsteady simulation
+        stdout, stderr = self.ASW_handler.send_command_and_receive(command , custom_timer=custom_timer)
 
     def Define_Sim_Settings(self):
         """_summary_
@@ -286,7 +286,7 @@ class WingLoop:
         while not (self.count + K >= N):
             # performing a number K of iteration (write output of the previous state, obtain the control command, send to aswing, perform K aswing iterations)
             if self.print_output:
-                print("Internal iterations: from", counter, " to ",counter+K, " (step of ", K,")")
+                print("Internal iterations: from", self.count, " to ",self.count+K, " (step of ", K,")")
             self.Performing_K_iterations_ASWING(Dt_aswing=Dt, K_aswing=K)
             #incrementing the counter
             self.count += K
@@ -294,11 +294,11 @@ class WingLoop:
         ### PERFORMING THE FINAL ROUND OF ITERATIONS (between L+k*K and N)
         if self.count<N:
             if self.print_output:
-                print("Final iterations: from", counter, " to ",N, " (step of ", N - counter,")")
+                print("Final iterations: from", self.count, " to ",N, " (step of ", N - self.count,")")
             self.Performing_K_iterations_ASWING(Dt_aswing=Dt, K_aswing=N-self.count)
-            counter += N-counter
+            self.count += N-self.count
         if self.print_output:
-            print("Final Counter",counter)
+            print("Final Counter",self.count)
             
         ### Plotting The Data
         

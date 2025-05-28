@@ -238,9 +238,9 @@ class PyControl:
     
         # Sending the final instructions
         output = {}
-        output["F1"]= aileron_command
-        output["F2"]= command_data["F2"] + elevator_command #increasing F2 decreases pitch, hence the minus sign command_data["dF2"]
-        output["F3"]= rudder_command
+        output["F1"]= 0#aileron_command
+        output["F2"]= command_data["F2"]# + elevator_command #increasing F2 decreases pitch, hence the minus sign command_data["dF2"]
+        output["F3"]= 0#rudder_command
         output["F4"]= 0
         
         # forcing the engine output
