@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: wingloop
+Version: 0.1.0
+Summary: ASWING Director library
+Author-email: Leonardo AVONI <avonileonardo@gmail.com>
+Requires-Python: >=3.7
+Description-Content-Type: text/markdown

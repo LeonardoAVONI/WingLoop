@@ -1,0 +1,9 @@
+pyproject.toml
+WingLoop_Library/Control_Library.py
+WingLoop_Library/Text2Python_Library.py
+WingLoop_Library/WingLoop_Library.py
+WingLoop_Library/__init__.py
+wingloop.egg-info/PKG-INFO
+wingloop.egg-info/SOURCES.txt
+wingloop.egg-info/dependency_links.txt
+wingloop.egg-info/top_level.txt
