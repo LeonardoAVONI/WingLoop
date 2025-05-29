@@ -43,6 +43,10 @@ How To Install
     Open a terminal, and write "/usr/bin/python3 -m pip install --user -e ."
     This will install it in Python, in editable mode (if you modify the code it 
     will impact the package behavior)
+    
+    Also: for VSCode to identify the imports: Add in the settings.json 
+    (File>Preferences>Settings, then top right corner)file the following:
+    "python.analysis.extraPaths": ["~/Bureau/01 Github/02_WingLoop/"]
 
 ====================================================================================
 """
