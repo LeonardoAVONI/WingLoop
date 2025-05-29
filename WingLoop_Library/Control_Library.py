@@ -1,12 +1,12 @@
 """
 ====================================================================================
-Control_Library, Version 4
+Control_Library, Package Version
 
 Author: Leonardo AVONI
 Date: 08/11/2024
 Email: avonileonardo@gmail.com
 
-Last modified: 17/12/2024
+Last modified: 29/05/2025
 
 ====================================================================================
 
@@ -14,21 +14,9 @@ Description:
 This Python class provides the following
     storage space for timeseries describing the aircraft flight
     storage space for control laws
-
-Features:
--append_flight_data: function made to append the flight data timestep after timestep
--PID: PID controller
--output_formatting: allows to link the physical model needs (which flap) to the control (which control)
--plot_the_data: allows to plot the timeseries
-
-Comments:
--
-
-Changelog:
-- Version 1 (08/11/2024): creation of the code
-- Version 2 (03/12/2024): clean version of the code, for Github
-- Version 3 (04/12/2024): more comments
-- Version 4 (17/12/2024): added a PID that used Wy from ASWING
+    
+The function used by WingLoop for control is PyControl.UAV_control_Strategy(..). 
+The other functions may be used by that method to help define control laws
 
 ====================================================================================
 """
