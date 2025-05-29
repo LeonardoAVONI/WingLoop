@@ -1,48 +1,20 @@
 """
 ====================================================================================
-test2python_library, Version 6
+Text2Python_Library, Package Version
 
 Author: Leonardo AVONI
 Date: 25/10/2024
 Email: avonileonardo@gmail.com
 
-Last modified:  17/12/2024
+Last modified:  29/05/2025
 
 ====================================================================================
 
 Description:
-This Python class provides functions helping any instance of Aswing_Director_Library
-to read and write data from the text documents used within ASWING
+Within the WingLoop_Library, this function provides functions used mainly by any WingLoop 
+instance. Refer to WingLoop th check which function is used where
 
-Features:
-- extract_value: extract state variables from the output document produced by ASWING
-- text2python: converts string variables
-- scientific_to_decimal and convert_extracted_values: help having a variable 
-    format acceptable by MATLAB
-- python2text: from python variables: writes the new Open-Loop forcing text file
-
-Comments:
-- the python2text has been checked in order to ensure that its output is properly 
-    recognized by ASWING
-
-Changelog:
-- Version 1 (25/10/2024): first version of the code
-- Version 2 (28/10/2024): modified python2text (unrecognized ASWING input)
-- Version 3 (29/10/2024): various functions were added, trying to read as fast 
-    as possible the text files from ASWING
-        # text2python_lines, slow
-        # text2python_main, fastest for the moment
-        # text2python_mmap, second faster
-        # text2python_mmap_Nlines, problematic
-- Version 4 (30/10/2024): only text2python_main function was kept, 
-    the others were commented
-- Version 5 (03/12/2024): made better comments for the code to be put on Github
-- Version 6 (17/12/2024): added a check, called safe_read_and_extract to see if the output file from ASWING is actually complete or not
-
-Possible improvements:
-    Making the class independent to the type of UAV used 
-    (for the moment the text2python_main>fields are specified, and also the python2text>F1,F2,F3...)
-
+Sometimes, if the "input" files for WingLoop are badly written, they are not recognized by ASWING    
 ====================================================================================
 """
 
