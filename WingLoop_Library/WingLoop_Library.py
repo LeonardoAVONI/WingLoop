@@ -61,7 +61,7 @@ import time
 import threading
 from queue import Queue, Empty
 from ASWING_Director_Library import Aswing_Director
-from WingLoop_Library.Text2Python_Library import text2python_main, python2text, text2python_withderivative
+from WingLoop_Library.Text2Python_Library import text2python_main, python2text, text2python_withderivative, extract_states_vector
 from WingLoop_Library.Control_Library import PyControl
 import sys
 
@@ -214,13 +214,18 @@ class WingLoop:
         # writing a dictionary containing the flight data specifics
         
         #instantaneous_flight_data = text2python_main("output")
-        instantaneous_flight_data = text2python_withderivative("output")    
+        needed_states = False
+        if needed_states:
+            x_state = extract_states_vector("output")
+            output = self.PyControl.UAV_control_Strategy_LQR(instantaneous_state = x_state, Dt = Dt_aswing*K_aswing)
+        else:
+            instantaneous_flight_data = text2python_withderivative("output")
         
-        # Appending the data in the python script
-        self.PyControl.append_flight_data(instantaneous_flight_data)
+            # Appending the data in the python script
+            self.PyControl.append_flight_data(instantaneous_flight_data)
 
-        # Controlling through the python script
-        output = self.PyControl.UAV_control_Strategy(instantaneous_flight_data, Dt = Dt_aswing*K_aswing)
+            # Controlling through the python script
+            output = self.PyControl.UAV_control_Strategy(instantaneous_flight_data, Dt = Dt_aswing*K_aswing)
 
         # create the file for the next iteration engine and flap deflections
         python2text("input",output)

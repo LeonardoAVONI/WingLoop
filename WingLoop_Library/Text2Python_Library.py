@@ -40,6 +40,35 @@ def extract_value(label, text):
         return match.group(1)
     else:
         return None
+def extract_states_vector(file_path):
+    with open(file_path, 'r') as file:
+        lines = file.readlines()
+
+    # Flag to track if we're inside the block
+    # used for the AIAA Aviation paper, Murua et al....
+    recording = False
+    values = []
+
+    for line in lines:
+        line = line.strip()
+
+        if 'STARTEDPRINTINGSTATES' in line:
+            recording = True
+            continue  # skip the marker line
+
+        if 'ENDEDPRINTINGSTATES' in line:
+            break  # end recording
+
+        if recording:
+            try:
+                # Each line can have one or more float values
+                values.extend(map(float, line.split()))
+            except ValueError:
+                # Skip lines with non-numeric content just in case
+                continue
+
+    x = np.array(values)
+    return x
 
 def seconds2hms(seconds):
     """
@@ -163,14 +192,14 @@ def text2python_withderivative(name):
 
 
     # Convert data to a NumPy array for easier manipulation
-    data = np.array(data)
+    #data = np.array(data)
     
-    LEN=len(data)
+    #LEN=len(data)
     
-    t = data[:, 0]  # t/10 column
-    M_c = 1000*0.5*(data[int(LEN/2), 1]+data[int(LEN/2-1), 1]) # compute the average WRBM using Mc
+    #t = data[:, 0]  # t/10 column
+    #M_c = 1000*0.5*(data[int(LEN/2), 1]+data[int(LEN/2-1), 1]) # compute the average WRBM using Mc
 
-    extracted_values["WRBM"] = M_c
+    #extracted_values["WRBM"] = M_c
 
     return extracted_values
 

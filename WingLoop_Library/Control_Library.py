@@ -126,6 +126,15 @@ class PyControl:
         self.VELOCITY = None
 
         self.Integrator = np.array([None])
+        
+        # AIAA Time check and Validation
+        # Kp=7 Ki=30 Kd=8 (from Theta to Elevator)
+        
+        self.PID_controller = PIDController(Kp=7, Ki=8, Kd=30) # for K=1
+        #self.PID_controller = PIDController(Kp=2, Ki=0.5, Kd=0.5) # for K=10
+        
+        self.x_state_trimmed = np.load(filename)
+        self.trimmed_inputs = self.x_state_trimmed[-6:] #recording the value f the last 6 elements
 
     def append_flight_data(self, instantaneous_struct):
         
@@ -188,12 +197,12 @@ class PyControl:
 
 
         #flexible case data
-        command_data["WRBM"]= 1925.984 # Nm
-        command_data["F2"]= -4.73589 # degrees
+        command_data["WRBM"]= 1926.26 # Nm
+        command_data["F2"]= -4.73592 # degrees
         command_data["E1"]= 2.69574 # degrees
         #command_data["Pitch"]= 4.7572999000549316 # degrees
-        command_data["Pitch"] = 4.75850 # degrees
-        command_data["AoA"]= 4.7572999000549316 # degrees
+        command_data["Pitch"] = 4.75853 # degrees
+        command_data["AoA"]= 4.7585043907165527
         command_data["Wx"] = 0
         command_data["Wy"] = 0
         command_data["Wz"] = 0
@@ -215,6 +224,7 @@ class PyControl:
             Aircraft yawing left has a negative heading
             Aircraft rolling left has a negative roll
         """
+        """
         aileron_gains = np.array([0.2,-7.5,0.01])
         elevator_gains = np.array([-3,-300,-0.02])
         rudder_gains = np.array([1,-100,0])
@@ -223,11 +233,16 @@ class PyControl:
         aileron_command = aileron_gains[0]*(command_data["Wx"]-instantaneous_flight_data["Wx"])+aileron_gains[1]*(command_data["Bank"]-instantaneous_flight_data["Bank"]) + aileron_gains[2]*(command_data["Wdotx"]-instantaneous_flight_data["Wdotx"]) #p i d in degrees
         elevator_command = elevator_gains[0]*(command_data["Wy"]-instantaneous_flight_data["Wy"]) +elevator_gains[1]*(command_data["Pitch"]-instantaneous_flight_data["Pitch"]) +elevator_gains[2]*(command_data["Wdoty"]-instantaneous_flight_data["Wdoty"]) #p i d in degrees
         rudder_command =  rudder_gains[0]*(command_data["Wz"]-instantaneous_flight_data["Wz"]) +rudder_gains[1]*(command_data["Heading"]-instantaneous_flight_data["Heading"]) + rudder_gains[2]*(command_data["Wdotz"]-instantaneous_flight_data["Wdotz"]) #p i d in degrees
+        """
     
+        # AIAA Time Test + Validation againts ASWING
+        elevator_command = self.PID_controller.runPID_continuousWy(instantaneous_flight_data["Pitch"],instantaneous_flight_data["Wy"],command_data["Pitch"],Ts=Dt)
+        
+        
         # Sending the final instructions
         output = {}
         output["F1"]= 0#aileron_command
-        output["F2"]= command_data["F2"]# + elevator_command #increasing F2 decreases pitch, hence the minus sign command_data["dF2"]
+        output["F2"]= command_data["F2"] - elevator_command[0] #increasing F2 decreases pitch, hence the minus sign command_data["dF2"]
         output["F3"]= 0#rudder_command
         output["F4"]= 0
         
@@ -236,6 +251,36 @@ class PyControl:
         output["E2"] = output["E1"]
 
         return output
+    
+    
+    
+    
+    def UAV_control_Strategy_LQR(self,instantaneous_state, Dt):
+        """ 
+        Made for LQR, for Murua, trimmed
+        
+        """
+
+        self.x_state_trimmed
+        instantaneous_state
+        
+        du = K@dx
+        
+        # Sending the final instructions
+        output = {}
+        output["F1"]= self.trimmed_inputs[0] + du[0]
+        output["F2"]= self.trimmed_inputs[1] + du[1]
+        output["F3"]= self.trimmed_inputs[2] + du[2]
+        output["F4"]= self.trimmed_inputs[3] + du[3]
+        
+        # forcing the engine output
+        output["E1"]= self.trimmed_inputs[4] + du[4]
+        output["E2"]= self.trimmed_inputs[5] + du[5]
+
+        return output
+    
+
+
     
     
     
