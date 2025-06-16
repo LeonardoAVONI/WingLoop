@@ -22,7 +22,8 @@ The other functions may be used by that method to help define control laws
 """
 import numpy as np
 import matplotlib.pyplot as plt
-
+import os
+from WingLoop_Library.Text2Python_Library import extract_states_vector
 from scipy.integrate import trapezoid
 
 class PIDController:
@@ -108,7 +109,7 @@ class PyControl:
     """
     Control class, containing the various control laws and history tracking of the variables used in Python
     """
-    def __init__(self):
+    def __init__(self,sim_directory):
         
         # Dynamic Tracking Variables
         self.TIME = None
@@ -130,11 +131,21 @@ class PyControl:
         # AIAA Time check and Validation
         # Kp=7 Ki=30 Kd=8 (from Theta to Elevator)
         
-        self.PID_controller = PIDController(Kp=7, Ki=8, Kd=30) # for K=1
+        self.PID_controller = PIDController(Kp=7, Ki=30, Kd=8) # for K=1
         #self.PID_controller = PIDController(Kp=2, Ki=0.5, Kd=0.5) # for K=10
         
-        self.x_state_trimmed = np.load(filename)
+
+        self.x_state_trimmed = extract_states_vector("initial_state")
         self.trimmed_inputs = self.x_state_trimmed[-6:] #recording the value f the last 6 elements
+        self.K_r_from_full = np.load('K_r_from_full.npy')
+        self.K_r_from_reduced = np.load('K_r_from_reduced.npy')
+        self.W_T_M = np.load('W_T_M.npy')
+        
+        self.q_state_trimmed = self.W_T_M@self.x_state_trimmed #trimmed modal state
+        # with u = -K @ (q - q_trim) + u_trim
+        # with K either K_r_from_full or K_r_from_reduced
+        # q = W_T_M@x
+
 
     def append_flight_data(self, instantaneous_struct):
         
@@ -192,6 +203,8 @@ class PyControl:
             PID in pitch tracking (using a PID) and fixed velocity
             Limitations in possible aileron deflections  (pm 10 degrees)
         """
+
+        print(instantaneous_flight_data)
 
         command_data = {}
 
@@ -260,12 +273,16 @@ class PyControl:
         Made for LQR, for Murua, trimmed
         
         """
-
-        self.x_state_trimmed
-        instantaneous_state
+       
+        # one could also use self.x_state_trimmed
+        # since it's just a matrix multiplication (linear) we decide to 
+        # precompute q_state_trimmed, so we only have to subtract length 32 vectors
+        q = self.W_T_M@instantaneous_state
         
-        du = K@dx
-        
+        # with u = -K @ (q - q_trim) + u_trim
+        # with K either K_r_from_full or K_r_from_reduced
+        du = -self.K_r_from_reduced@(q-self.q_state_trimmed)
+                
         # Sending the final instructions
         output = {}
         output["F1"]= self.trimmed_inputs[0] + du[0]

@@ -102,7 +102,7 @@ class WingLoop:
         
         # create a Python Instance, for control reasons. It stores timeseries and control laws
         # the exact controller used is in UAV_control_Strategy (modifiable)
-        self.PyControl = PyControl()
+        self.PyControl = PyControl(sim_directory)
         
                 
     def Load_Files(self,filename):
@@ -175,13 +175,13 @@ class WingLoop:
             if state_file_write_options == "delete":
                 
                 # This option deletes the previous input file before writing the new one                
-                stdout, stderr = self.Aswing_handler.send_command_and_receive("W",custom_timer=custom_timer) # write the data
+                stdout, stderr = self.ASW_handler.send_command_and_receive("W",custom_timer=custom_timer) # write the data
                 os.remove("output")
                 # Once the previous file is deleted, we can write the new one
                 # There's no need for the "append_or_overwrite" option, since 
                 # the previous file disappeared, so there's nothing to append 
                 # "a" or overwrite "o"
-                stdout, stderr , time_taken= self.Aswing_handler.send_writefile_command_and_receive(filename="output", 
+                stdout, stderr , time_taken= self.ASW_handler.send_writefile_command_and_receive(filename="output", 
                                                                                                     custom_timer=custom_timer)
 
             if state_file_write_options == "overwrite":
@@ -214,8 +214,8 @@ class WingLoop:
         # writing a dictionary containing the flight data specifics
         
         #instantaneous_flight_data = text2python_main("output")
-        needed_states = False
-        if needed_states:
+        doing_LQR = True
+        if doing_LQR:
             x_state = extract_states_vector("output")
             output = self.PyControl.UAV_control_Strategy_LQR(instantaneous_state = x_state, Dt = Dt_aswing*K_aswing)
         else:
@@ -343,12 +343,12 @@ class WingLoop:
             self.PyControl.plot_the_data()
         # writing an output timeseries for various variables
         if timeseries is not None:
+            print("TEST")
             stdout, stderr = self.ASW_handler.send_command_and_receive("P")
             stdout, stderr = self.ASW_handler.send_command_and_receive("W")
             if os.path.exists(timeseries+".t"):
                 os.remove(timeseries+".t")
-
-            stdout, stderr = self.ASW_handler.send_command_and_receive(timeseries+".t")
+            stdout, stderr = self.ASW_handler.send_command_and_receive(timeseries+".t",custom_timer=1)
 
     def Closing_WingLoop(self,removefiles = True):
         """Is in charge of closing the ASWING and ending the program
