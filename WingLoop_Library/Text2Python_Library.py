@@ -68,6 +68,7 @@ def extract_states_vector(file_path):
                 continue
 
     x = np.array(values)
+    x[-12]=0
     return x
 
 def seconds2hms(seconds):

@@ -137,11 +137,13 @@ class PyControl:
 
         self.x_state_trimmed = extract_states_vector("initial_state")
         self.trimmed_inputs = self.x_state_trimmed[-6:] #recording the value f the last 6 elements
-        self.K_r_from_full = np.load('K_r_from_full.npy')
-        self.K_r_from_reduced = np.load('K_r_from_reduced.npy')
-        self.W_T_M = np.load('W_T_M.npy')
+        #self.K_r_from_full = np.load('K_r_from_full.npy')
+        #self.K_r_from_reduced = np.load('K_r_from_reduced.npy')
+        self.K_x = np.load('K_x.npy')
+        #self.W_T_M = np.load('W_T_M.npy')
         
-        self.q_state_trimmed = self.W_T_M@self.x_state_trimmed #trimmed modal state
+        #self.q_state_trimmed = self.W_T_M@self.x_state_trimmed #trimmed modal state
+        #print(self.q_state_trimmed)
         # with u = -K @ (q - q_trim) + u_trim
         # with K either K_r_from_full or K_r_from_reduced
         # q = W_T_M@x
@@ -272,27 +274,35 @@ class PyControl:
         """ 
         Made for LQR, for Murua, trimmed
         
+        the correct LQR equation, including for trimming point is: utot = -K(xtot-xt) + ut
         """
        
         # one could also use self.x_state_trimmed
         # since it's just a matrix multiplication (linear) we decide to 
         # precompute q_state_trimmed, so we only have to subtract length 32 vectors
-        q = self.W_T_M@instantaneous_state
+        #q = self.W_T_M@instantaneous_state
+        
+        dx = instantaneous_state-self.x_state_trimmed
+        du = self.trimmed_inputs -self.K_x@(dx)
         
         # with u = -K @ (q - q_trim) + u_trim
         # with K either K_r_from_full or K_r_from_reduced
-        du = -self.K_r_from_reduced@(q-self.q_state_trimmed)
+        #du = self.trimmed_inputs - self.K_r_from_reduced@(q-self.q_state_trimmed)
+        
+        # Apply limits to du
+        du[:4] = np.clip(du[:4], -20, 20)  # Limit du[0,1,2,3] between -20 and 20
+        du[4:] = np.clip(du[4:], 0, 10)   # Limit du[4,5] between 0 and 10
                 
         # Sending the final instructions
         output = {}
-        output["F1"]= self.trimmed_inputs[0] + du[0]
-        output["F2"]= self.trimmed_inputs[1] + du[1]
-        output["F3"]= self.trimmed_inputs[2] + du[2]
-        output["F4"]= self.trimmed_inputs[3] + du[3]
+        output["F1"]=  du[0]
+        output["F2"]=  du[1]
+        output["F3"]=  du[2]
+        output["F4"]= du[3]
         
         # forcing the engine output
-        output["E1"]= self.trimmed_inputs[4] + du[4]
-        output["E2"]= self.trimmed_inputs[5] + du[5]
+        output["E1"]= du[4]
+        output["E2"]= du[5]
 
         return output
     
