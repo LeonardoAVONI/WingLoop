@@ -330,6 +330,13 @@ class WingLoop:
         ### Plotting The Data
         
 
+
+
+    def Outputting_The_State_File(self,statefile_filename):
+        stdout, stderr = self.ASW_handler.send_command_and_receive("\n")
+        stdout, stderr = self.ASW_handler.send_command_and_receive("HSAV")
+        stdout, stderr = self.ASW_handler.send_command_and_receive(statefile_filename,custom_timer=1)
+
 ### OUTPUT THE RESULTS
 
     def Outputting_The_Results(self,plot = True, timeseries=None):
@@ -338,6 +345,8 @@ class WingLoop:
         Args:
             plot (bool, optional): do you want to show plots or not. Defaults to True.
             timeseries (string, optional): name of the timeseries to be saved. Defaults to None.
+            
+        Maybe one could create this with the function that stops only when the file is done writing
         """
         if plot:
             self.PyControl.plot_the_data()

@@ -291,7 +291,7 @@ class PyControl:
         
         # Apply limits to du
         du[:4] = np.clip(du[:4], -20, 20)  # Limit du[0,1,2,3] between -20 and 20
-        du[4:] = np.clip(du[4:], 0, 10)   # Limit du[4,5] between 0 and 10
+        du[4:] = np.clip(du[4:], -10, 10)   # Limit du[4,5] between 0 and 10 #possible to make negative thrust
                 
         # Sending the final instructions
         output = {}
