@@ -16,7 +16,10 @@ function output = UAV_control_Strategy_LQR(instantaneous_state, Dt)
         du(5:6) = max(min(du(5:6), 10), -10);
   
     end
+    testvalue = instantaneous_state(15:18);
     % Return Python-friendly struct
     output = struct('F1',du(1),'F2',du(2),'F3',du(3),'F4',du(4), ...
+                        'E1',du(5),'E2',du(6));
+    output = struct('F1',testvalue(1),'F2',testvalue(2),'F3',testvalue(3),'F4',testvalue(4), ...
                         'E1',du(5),'E2',du(6));
 end

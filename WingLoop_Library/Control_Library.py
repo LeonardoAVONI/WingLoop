@@ -171,19 +171,23 @@ class PyControl:
         # q = W_T_M@x
 
         self.eng = None
-        self.method = "python"
+        self.method = "simulink"
         self.Dt = 0.01
         self.time = 0.0
+        
+        #path = "/home/leonardo-avoni/Desktop/01_GitHub/02_WingLoop/WingLoop_Library"
+        path = "/home/daep/l.avoni/Bureau/01 Github/02_WingLoop/WingLoop_Library"
+        fmupath = os.path.join(path, "UAV_Controller.fmu")
 
         if self.method in ["matlab", "simulink"]:
             self.eng = matlab.engine.start_matlab("-nodesktop -nosplash")
 
         if self.method == "matlab":
-            self.eng.addpath('/home/leonardo-avoni/Desktop/01_GitHub/02_WingLoop/WingLoop_Library', nargout=0)
+            self.eng.addpath(path, nargout=0)
             self.eng.workspace['Dt'] = 0.01  # optional
         elif self.method == "simulink":
             # self.eng.set_param('UAV_Controller', 'SimulationCommand', 'step', nargout=0)
-            self.eng.addpath('/home/leonardo-avoni/Desktop/01_GitHub/02_WingLoop/WingLoop_Library', nargout=0)
+            self.eng.addpath(path, nargout=0)
             self.eng.load_system('UAV_Controller')
             self.eng.set_param('UAV_Controller', 'ReturnWorkspaceOutputs', 'on', nargout=0)
             #self.eng.set_param('UAV_Controller', 'SimulationCommand', 'start', nargout=0)
@@ -192,7 +196,7 @@ class PyControl:
 
         elif self.method == "simulink_fmu":
             self.fmu_controller = SimulinkFMUController(
-                fmu_path="/home/leonardo-avoni/Desktop/01_GitHub/02_WingLoop/WingLoop_Library/UAV_Controller.fmu",
+                fmu_path=fmupath,
                 Dt=0.01
             )
     def append_flight_data(self, instantaneous_struct):
@@ -279,8 +283,18 @@ class PyControl:
             state_array = np.array(instantaneous_state, dtype=np.float64).flatten()
             if len(state_array) != 1945:
                 raise ValueError("State vector must be 1945 long")
+                        
+            t_vec = [self.time, self.time + self.Dt]
+            u_mat = [state_array.tolist(), state_array.tolist()]
 
-            self.eng.workspace['statein'] = matlab.double(state_array.tolist())
+            external_input = matlab.double(
+                [[t_vec[0]] + u_mat[0],
+                [t_vec[1]] + u_mat[1]]
+            )
+
+            self.eng.workspace['statein'] = external_input
+
+            #self.eng.workspace['statein'] = matlab.double(state_array.tolist())
 
             # Short simulation
             self.eng.workspace['Tstart'] = self.time
@@ -290,6 +304,8 @@ class PyControl:
                 'UAV_Controller',
                 'StartTime', 'Tstart',
                 'StopTime',  'Tstop',
+                'LoadExternalInput', 'on',
+                'ExternalInput', 'statein',
                 nargout=1
             )
 
