@@ -38,12 +38,28 @@ def initialize_data_dict(requested, rename_map=None, units=None, latex=None):
 
     return data
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def read_aswing_file(filepath, data_dict, rename_map=None):
     if rename_map is None:
         rename_map = {}
 
     # ------------------------------------------------------------------
-    # Build exact-match regex from all requested variables
+    # Collect ALL raw names exactly as they appear in the file
     # ------------------------------------------------------------------
     raw_names = list(rename_map.keys())
     for internal in list(data_dict["ModelVariables"].keys()):
@@ -51,19 +67,26 @@ def read_aswing_file(filepath, data_dict, rename_map=None):
             raw_names.append(internal)
 
     all_raw = set(raw_names)
-    sorted_raw = sorted(all_raw, key=len, reverse=True)   # longest first
+    sorted_raw = sorted(all_raw, key=len, reverse=True)
     name_alt = '|'.join(re.escape(name) for name in sorted_raw)
 
     first_words = {name.split()[0] for name in all_raw if name}
     sorted_first = sorted(first_words, key=len, reverse=True)
     first_alt = '|'.join(re.escape(w) for w in sorted_first)
 
+    # ------------------------------------------------------------------
+    # Final ultra-robust pattern
+    # ------------------------------------------------------------------
     pattern = re.compile(rf"""
-        (?<![A-Za-z0-9])             # <<< NEW: prevents matching "e" inside "Engine", "Peng", "Density"...
-        ({name_alt})                 # exact raw variable name as it appears in the file
+        (?<![A-Za-z0-9])                # word boundary
+        ({name_alt})                    # exact raw variable
         \s*:\s*
-        ([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)   # numeric value
-        (?:\s+(?!(?:{first_alt})(?=[\s:]|$))([^\s:]+))?   # unit (only if not start of next var)
+        ([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)   # value
+        (?:\s+                          # optional unit
+            (?! (?:{first_alt})(?=[\s:]|$))   # NOT start of any known variable
+            ([^\s:]+)                   # the unit token
+            (?= \s (?! :) | $ )         # followed by space-not-colon OR end-of-line
+        )?
     """, re.VERBOSE)
 
     with open(filepath, "r") as f:
@@ -98,7 +121,7 @@ def read_aswing_file(filepath, data_dict, rename_map=None):
 
         # Extract variables
         for match in pattern.finditer(line):
-            var_name = match.group(1).strip()          # raw name from file
+            var_name = match.group(1).strip()
             value = float(match.group(2))
             unit_candidate = match.group(3)
 
@@ -108,15 +131,13 @@ def read_aswing_file(filepath, data_dict, rename_map=None):
                 data_dict["ModelVariables"][internal_name]["values"].append(value)
 
                 if (data_dict["ModelVariables"][internal_name]["unit"] is None and
-                        unit_candidate is not None and
-                        is_likely_unit(unit_candidate)):
+                        unit_candidate is not None):
                     data_dict["ModelVariables"][internal_name]["unit"] = unit_candidate
 
     if "IsConverged" in data_dict["ModelVariables"]:
         data_dict["ModelVariables"]["IsConverged"]["values"].append(converged)
 
     return data_dict
-
 
 def print_aswing_summary(data_dict, max_vars_per_line=4):
     print("\n" + "="*70)
