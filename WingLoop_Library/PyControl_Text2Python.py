@@ -40,6 +40,9 @@ def extract_value(label, text):
         return match.group(1)
     else:
         return None
+    
+    
+
 def extract_states_vector(file_path):
     with open(file_path, 'r') as file:
         lines = file.readlines()
@@ -117,7 +120,7 @@ def text2python_main(name):
 
     # List of fields to extract
     fields = ['Time','earth X','earth Y','earth Z','Heading', 'Elev.', 'Bank','Alpha','Beta','Velocity','Flap 2']
-
+    
     # Extract the values for each field
     #extracted_values = {field: extract_value(field, text) for field in fields}
     
@@ -277,8 +280,8 @@ if __name__=="__main__":
         instantaneous_flight_data = text2python_withderivative("output_6_1999_crash")
         print(instantaneous_flight_data)
     """
-    ff = ['Time','earth X','earth Y','earth Z','Heading', 'Elev.', 'Bank','Alpha','Beta','Velocity','Flap 2','Wy']
-    test = safe_read_and_extract("test",ff)
+    entries = ['Time','earth X','earth Y','earth Z','Heading', 'Elev.', 'Bank','Alpha','Beta','Velocity','Flap 2','Wy']
+    test = safe_read_and_extract("testfiles/ASWING_test_output",entries)
     print(test)
 
 """

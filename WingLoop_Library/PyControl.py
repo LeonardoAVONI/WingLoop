@@ -23,7 +23,7 @@ The other functions may be used by that method to help define control laws
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-from WingLoop_Library.Text2Python_Library import extract_states_vector
+from WingLoop_Library.PyControl_Text2Python import extract_states_vector
 from scipy.integrate import trapezoid
 import matlab.engine
 import fmpy
@@ -31,99 +31,7 @@ import os
 import shutil
 from fmpy import read_model_description, extract, instantiate_fmu
 
-class SimulinkFMUController:
-    def __init__(self, fmu_path, Dt=0.01):
-        """
-        fmu_path: full path to your .fmu file (string)
-        """
-        self.fmu_path = fmu_path
-        self.Dt = Dt
-        self.time = 0.0
-        self.unzipdir = None
-        self.fmu = None
 
-        # Parse the model description (returns ModelDescription object)
-        self.model_description = read_model_description(self.fmu_path)
-
-        # Extract FMU contents to a temp directory (returns the unzip path string)
-        self.unzipdir = extract(self.fmu_path)  # auto temp dir if not specified
-
-        # Instantiate correctly:
-        # 1st arg: unzip directory (string)
-        # 2nd arg: model_description (ModelDescription object, NOT string!)
-        self.fmu = instantiate_fmu(
-            unzipdir=self.unzipdir,
-            model_description=self.model_description,
-            visible=False,
-            debug_logging=False  # change to True for FMI debug output during dev
-        )
-
-        # Optional: set initial parameters if your FMU has tunable ones
-        # fmpy.set(self.fmu, 'your_param_name', some_value)
-    def stepold(self, instantaneous_state):
-        state_array = np.array(instantaneous_state, dtype=np.float64).flatten()
-
-        # Collect all FMU input VRs
-        # Get the FMU input variable corresponding to the Bus element
-        print(self.model_description.modelVariables )
-        input_var = next((v for v in self.model_description.modelVariables if 'InBus' in v.name), None)
-        if input_var is None:
-            raise ValueError("Bus input variable not found in FMU model description")
-
-
-        # Optionally check size
-        if len(state_array) != 1945:  # or len(input_var.start)
-            raise ValueError(f"State vector length ({len(state_array)}) does not match FMU input size (1945)")
-
-        # Set the vector input (single VR)
-        self.fmu.setReal([input_var.valueReference], [state_array.tolist()])
-
-        # Advance FMU
-        self.fmu.doStep(currentCommunicationPoint=self.time, communicationStepSize=self.Dt)
-        self.time += self.Dt
-
-        # Get outputs
-        output_names = ['F1', 'F2', 'F3', 'F4', 'E1', 'E2']
-        output_vrs = [next((v.valueReference for v in self.model_description.modelVariables if v.name == n), None)
-                    for n in output_names]
-        output_values = self.fmu.getReal(output_vrs)
-        return dict(zip(output_names, [float(v) for v in output_values]))
-
-    def step(self, instantaneous_state):
-        state_array = np.array(instantaneous_state, dtype=np.float64).flatten()
-
-        # Get all input variables for InputState[1..1945]
-        input_vars = [v for v in self.model_description.modelVariables if v.name.startswith('statein[')]
-        input_vars.sort(key=lambda v: v.valueReference)  # Ensure correct order
-
-        if len(state_array) != len(input_vars):
-            raise ValueError(f"State vector length ({len(state_array)}) does not match FMU input count ({len(input_vars)})")
-
-        input_vrs = [v.valueReference for v in input_vars]
-
-        # Set all 1945 inputs at once
-        self.fmu.setReal(input_vrs, state_array.tolist())
-
-        # Advance FMU
-        self.fmu.doStep(currentCommunicationPoint=self.time, communicationStepSize=self.Dt)
-        self.time += self.Dt
-
-        # Get outputs
-        output_names = ['F1', 'F2', 'F3', 'F4', 'E1', 'E2']
-        output_vrs = [next((v.valueReference for v in self.model_description.modelVariables if v.name == n), None)
-                    for n in output_names]
-        output_values = self.fmu.getReal(output_vrs)
-        return dict(zip(output_names, [float(v) for v in output_values]))
-
-    def terminate(self):
-        """Call this when done (e.g. in WingLoop cleanup) to free resources"""
-        if self.fmu:
-            try:
-                self.fmu.terminate()
-            except:
-                pass
-        if self.unzipdir and os.path.exists(self.unzipdir):
-            shutil.rmtree(self.unzipdir, ignore_errors=True)
 
 
 class PyControl:
@@ -133,9 +41,12 @@ class PyControl:
     """
     def __init__(self,sim_directory):
         
+        self.PyControlStorage = {}
         # Dynamic Tracking Variables
-        self.TIME = None
-
+        Filename: 
+        Converged: True False
+        Time
+        
         self.EarthX = None
         self.EarthY = None
         self.EarthZ = None
@@ -148,7 +59,26 @@ class PyControl:
         self.BETA = None
         self.VELOCITY = None
 
-        self.Integrator = np.array([None])
+
+ Velocity: 30.067     m/s      Heading:-0.25795E-01 deg      earth X: -2.70211     m      
+ Beta    : .48011E-01 deg      Elev.  :  5.4368     deg      earth Y: 0.355939E-03 m      
+ Alpha   : 5.4277     deg      Bank   : 0.50998E-01 deg      earth Z: 0.206801E-03 m      
+ sum Mx  : .46573E-03 N-m        Wx   :-0.37361E-01 deg/s     Wdotx :  9.93728     deg/s^2
+ sum My  : .26519E-04 N-m        Wy   :  13.168     deg/s     Wdoty :  21.2797     deg/s^2
+ sum Mz  :-.10850E-03 N-m        Wz   : 0.51964     deg/s     Wdotz :  4.26838     deg/s^2
+ sum Fx  : 0.0000     N          Ux   : -29.921     m/s       Udotx :-0.981660     m/s^2  
+ sum Fy  : .57195E-05 N          Uy   : 0.25189E-01 m/s       Udoty : 0.994358E-01 m/s^2  
+ sum Fz  :-.86717E-04 N          Uz   : -2.8413     m/s       Udotz : 0.560755E-01 m/s^2   
+
+ Lift    :  705.16998291015625     N        Density: 0.89900285005569458E-01 kg/m^3  Ref.Area:  31.817699432373047     m^2    
+ Weight  :  731.67608642578125     N        Dyn.Pr.:  40.620231628417969     N/m^2   Ref.Span:  31.817699432373047     m      
+ Load Fac:  1.0000007152557373              VIAS   :  30.061201095581055     m/s     Ref.Chrd:  1.0000000000000000     m      
+ Mach    : 0.10190215706825256              VTAS   :  30.061155319213867     m/s     MachPG  :  0.0000000000000000            
+L :  0.5456        CD :   0.00304       L/D :  179.36        
+Cm :  0.0822       CDi :   0.00384        e  :  0.7565      
+
+
+
         
         # AIAA Time check and Validation
         # Kp=7 Ki=30 Kd=8 (from Theta to Elevator)
@@ -436,186 +366,71 @@ class PyControl:
         output["E2"] = output["E1"]
 
         return output
-    
-    
-    
-    
 
-    def plot_the_data(self):
-        
+
+class SimulinkFMUController:
+    def __init__(self, fmu_path, Dt=0.01):
         """
-        Create a figure showing the timeseries evolution of
-            Pitch, Roll, Yaw
-            EarthX, EarthY, EarthZ
-            Alpha, Beta
-            Velocity (airspeed)
-        over time
-        
-        A horizontal line is also placed to indicate the reference pitch
+        fmu_path: full path to your .fmu file (string)
         """
-        
-        
-        # Create a figure and a grid of subplots
-        fig, axs = plt.subplots(4, 1, figsize=(10, 15))
-        fig.suptitle('Various Data Over Time', fontsize=16)
-        #print(self.TIME)
-        # Plot PITCH, ROLL, YAW over TIME
-        axs[0].plot(self.TIME, self.PITCH, label='Pitch', color='blue')
-        axs[0].plot(self.TIME, self.ROLL, label='Roll', color='green')
-        axs[0].plot(self.TIME, self.YAW, label='Yaw', color='red')
-        axs[0].set_title('Pitch, Roll, Yaw Over Time')
-        axs[0].set_xlabel('Time')
-        axs[0].set_ylabel('Angle (degrees)')
-        axs[0].legend()
-        axs[0].grid(True)
-        #axs[0].set_ylim([-10, 10])  # Set y-axis limits
+        self.fmu_path = fmu_path
+        self.Dt = Dt
+        self.time = 0.0
+        self.unzipdir = None
+        self.fmu = None
 
-        # Save to a .npy file (binary format)
-        if False:
-            name = "K_3_"
-            np.save(name+"TIME.npy", self.TIME)
-            np.save(name+"PITCH.npy", self.PITCH)
-            np.save(name+"ALPHA.npy", self.ALPHA)
-            np.save(name+"EarthZ.npy", self.EarthZ)
-            np.save(name+"VELOCITY.npy", self.VELOCITY)
+        # Parse the model description (returns ModelDescription object)
+        self.model_description = read_model_description(self.fmu_path)
+
+        # Extract FMU contents to a temp directory (returns the unzip path string)
+        self.unzipdir = extract(self.fmu_path)  # auto temp dir if not specified
+
+        # Instantiate correctly:
+        # 1st arg: unzip directory (string)
+        # 2nd arg: model_description (ModelDescription object, NOT string!)
+        self.fmu = instantiate_fmu(
+            unzipdir=self.unzipdir,
+            model_description=self.model_description,
+            visible=False,
+            debug_logging=False  # change to True for FMI debug output during dev
+        )
 
 
-        # Add a horizontal line at pitch = 0.8877
-        axs[0].axhline(y=0.5706, color='orange', linestyle='--', label='Command Pitch')
-        axs[0].legend()  # Update legend to include the new line
+    def step(self, instantaneous_state):
+        state_array = np.array(instantaneous_state, dtype=np.float64).flatten()
 
+        # Get all input variables for InputState[1..1945]
+        input_vars = [v for v in self.model_description.modelVariables if v.name.startswith('statein[')]
+        input_vars.sort(key=lambda v: v.valueReference)  # Ensure correct order
 
-        # Plot EarthX, EarthY, EarthZ over TIME
-        axs[1].plot(self.TIME, self.EarthX, label='EarthX', color='blue')
-        axs[1].plot(self.TIME, self.EarthY, label='EarthY', color='green')
-        axs[1].plot(self.TIME, self.EarthZ, label='EarthZ', color='red')
-        axs[1].set_title('EarthX, EarthY, EarthZ Over Time')
-        axs[1].set_xlabel('Time')
-        axs[1].set_ylabel('Position')
-        axs[1].legend()
-        axs[1].grid(True)
-        axs[1].set_ylim([-3, 3])  # Set y-axis limits
+        if len(state_array) != len(input_vars):
+            raise ValueError(f"State vector length ({len(state_array)}) does not match FMU input count ({len(input_vars)})")
 
-        # Plot ALPHA, BETA over TIME
-        axs[2].plot(self.TIME, self.ALPHA, label='Alpha', color='blue')
-        axs[2].plot(self.TIME, self.BETA, label='Beta', color='green')
-        axs[2].set_title('Alpha, Beta Over Time')
-        axs[2].set_xlabel('Time')
-        axs[2].set_ylabel('Angle (radians)')
-        axs[2].legend()
-        axs[2].grid(True)
-        #axs[2].set_ylim([-10, 10])  # Set y-axis limits
+        input_vrs = [v.valueReference for v in input_vars]
 
-        # Plot VELOCITY over TIME
-        axs[3].plot(self.TIME, self.VELOCITY, label='Velocity', color='blue')
-        axs[3].set_title('Velocity Over Time')
-        axs[3].set_xlabel('Time')
-        axs[3].set_ylabel('Velocity (units)')
-        axs[3].legend()
-        axs[3].grid(True)
-        #axs[3].set_ylim([0, 40])  # Set y-axis limits
+        # Set all 1945 inputs at once
+        self.fmu.setReal(input_vrs, state_array.tolist())
 
-        # Adjust layout
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        plt.show()
+        # Advance FMU
+        self.fmu.doStep(currentCommunicationPoint=self.time, communicationStepSize=self.Dt)
+        self.time += self.Dt
 
-    def write_to_file(self):
-        np.savez("00_python_data.npz", TIME=self.TIME, ALPHA=self.ALPHA, VELOCITY=self.VELOCITY, PITCH=self.PITCH, F2=self.F2, Integrator = self.Integrator)
-    
+        # Get outputs
+        output_names = ['F1', 'F2', 'F3', 'F4', 'E1', 'E2']
+        output_vrs = [next((v.valueReference for v in self.model_description.modelVariables if v.name == n), None)
+                    for n in output_names]
+        output_values = self.fmu.getReal(output_vrs)
+        return dict(zip(output_names, [float(v) for v in output_values]))
 
-    def obtain_the_metrics(self):
-        
-        """
-        
-        function made to compute, using available timeseries, the following values:
-            settling_time
-            rise_time
-            peak_time
-            peak_error
-            overshoot
-        the function then returns the result of an objective function (linear combination of some of those values) that has to be minimized to find the best PID
-        
-        """
-
-        t=self.TIME
-        y=self.PITCH
-
-        reference_pitch=0.5706
-        start_time=0.1
-
-        # only analyzing from the PID start
-        mask = t > start_time
-        t = t[mask]
-        y = y[mask]
-
-        steady_state_value=reference_pitch
-
-        peak_error = np.max(np.abs(y-steady_state_value))
-        print("Absolute Peak Error:", peak_error)
-
-        # Define thresholds as percentages of the peak value
-        margin=0.01
-        lower_threshold = (1-margin) * peak_error
-        upper_threshold = (1+margin) * peak_error
-        # Find the peak time to max absolute peak error
-        peak_time_indices = np.where((np.abs(y-steady_state_value) >= lower_threshold) & (np.abs(y-steady_state_value) <= upper_threshold))[0]
-
-        if len(peak_time_indices) > 0:
-            peak_time = t[peak_time_indices[0]] - t[0] #take the first index that is true, and subtract to the first time from the step
-        else:
-            peak_time = None
-        print("Peak time [s]:", peak_time) #peak time was checked
-
-
-        # Find the rise time as first time at which error changes sign
-        rise_time_indices = np.where(np.diff(np.sign(y-steady_state_value)) != 0)[0]
-        if len(rise_time_indices) > 0:
-            rise_time = t[rise_time_indices[0]] - t[0] #take the first index that is true, and subtract to the first time from the step
-        else:
-            rise_time = None
-        print("Rise time [s]:", rise_time)
-
-
-        # find the overshoot, also we want it in absolute value
-        overshoot = (peak_error - steady_state_value) / steady_state_value * 100
-        print("Overshoot (%):", overshoot)
-
-
-        # Define a tolerance band around the steady-state value (e.g., 2%)
-        tolerance = 0.2
-        # Find the time when the signal stays within the tolerance band
-        error = np.abs(y - steady_state_value)
-
-        if error[-1] > tolerance: # the end point of the signal is larger than the tolerance
-            settling_time=None
-        else:
-            buffer_error = error[::-1]
-            buffer_time = t[::-1]
-            settling_time_indices = np.where(buffer_error > tolerance)[0] # check where it is positive
-            if not len(settling_time_indices): # depending on the treshold value all y-error value can be valid 
-                settling_time=0
-            else:
-                settling_time = buffer_time[np.min(settling_time_indices)] - t[0] #pick the first item for which the condition holds
-
-        print("Settling Time [s]:",settling_time)
-
-        # evaluation
-
-        a_rise=0.5
-        a_peak=0.5
-        a_set=1 #
-
-
-        if settling_time==None or rise_time==None or peak_time==None:
-            score = np.inf
-        else:
-            score = a_set*settling_time + a_rise*rise_time + a_peak*peak_error
-
-        return score
-
-
-
-
+    def terminate(self):
+        """Call this when done (e.g. in WingLoop cleanup) to free resources"""
+        if self.fmu:
+            try:
+                self.fmu.terminate()
+            except:
+                pass
+        if self.unzipdir and os.path.exists(self.unzipdir):
+            shutil.rmtree(self.unzipdir, ignore_errors=True)
 
 
 

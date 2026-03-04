@@ -1,0 +1,180 @@
+#========================================
+Name
+wingloop_test_aircraft, for WingLoop testing                                                            
+End
+
+# Murua el al. 2012 Open-Loop Stability and Closed-Loop Gust Alleviation on Flexible Aircraft Including Wake Modeling
+
+# Last modified: 19/01/2025
+# 1: main wing
+# 2: horizontal stabilizer
+# 3: vertical stabilizer
+# 4: fuselage
+
+# F1: aileron: roll control (positive if rolling left)
+# F2: elevator: pitch control (positive if pitching down)
+# F3: empennage: yaw control (positive if turning left)
+# F4: aileron: "flap"/WRBM control (positive if increasing lift)
+
+# geometry and flight specifics have been checked the 16/01/2024 at 18:00
+
+
+#============
+Units
+L 1.0 m
+T 1.0 s
+M 1.0 kg
+End
+#============
+Constant
+#   g         rho_SL     V_sound
+    9.808464  0.0899     295
+End
+#============tocheck
+Reference
+#	Sref	Cref	Bref 
+	31.8177	1	31.8177
+#
+#	Xmom	Ymom	Zmom
+	0.0	0.0	0.0
+End
+#============
+Joint
+#	Nbeam1	Nbeam2	t1	t2
+	4	1	1	0
+	4	3	11	11
+	3	2	0	0
+End
+
+#============
+Ground
+#	Nbeam	t	Kground
+	4	1.0	0
+End
+
+#======================
+Weight
+#   Nbeam 	t	Xp	Yp	Zp	Mg	CDA	Vol	Hx	Hy	Hz (Left, Center, Right then Payload)
+*		1	1	1	1	9.808	1	1	1	1	1
+	1	0	0	0	0	50	0.0	0.0	0.0	0.0	0.0
+End
+
+#======================
+Sensor
+# KS	Nb	t	Xp	Yp	Zp
+*		1.	1.	1.	1.
+   1 	1	0 	0	0	0	
+   2 	1	160 	0.0	15.9088	1.04189
+End
+
+#============
+
+Engine
+# 	KPeng	IEtyp	Nbeam	t	Xp	Yp	Zp	Tx	Ty	Tz	dFdPe	dMdPe	Rdisk	Omega	cdA
+*				20	-0.5	2	1	1	1	1	1	1	1.5	1	1							
+	1	0	1	-1	1	-1 	0.	-1.	0.	0.	1.0	0.0	1.0	0.	0.0
+	2	0	1	1	1	1 	0.	-1.	0.	0.	1.0	0.0	1.0	0.	0.0
+End
+#============
+Beam 1
+Wing
+	t	x	y	z	chord
+*	1.0	1.0	1.0	1.0	1
+	0.0	0.0	0.0	0.0	1
+	100.0	0.0	10	0.0	1
+	100.0	0.0	10	0.0	1
+	160.0	0.0	15.9088	1.04189	1
+	
+	t	Xax	Ccg	Cea
+*	1.0	1.0	1.0	1.0
+	0.0	0.5	0	0
+	160.0	0.5	0	0
+
+	t	GJ	EIcc	EInn
+*	1.0	2E4	4E4	8E6
+	0.0	1.0	1.0	1.0
+	160.0	1.0	1.0	1.0
+	
+	t	mg	mgnn
+*	1.0	9.808	9.808
+	0.0	0.75	0.1
+	160.0	0.75	0.1
+	
+	t	dCLdF1			dCMdF1
+*	1.0	0.06678407977830864	-0.011336246026463862
+	-160.0	-1			-1
+	-100.0	-1			-1
+	-100.0	0			0
+	100.0	0			0
+	100.0	1			1
+	160.0	1			1
+
+	t	dCLdF4			dCMdF4
+*	1.0	0.06678407977830864	-0.011336246026463862
+	-160.0	1			1
+	-100.0	1			1
+	-100.0	0			0
+	100.0	0			0
+	100.0	1			1
+	160.0	1			1
+
+End
+
+#============
+Beam 2
+Horizontal Stabilizer
+	t	x	y	z	chord
+*	1.0	10.0	1.0	3.75	1
+	0.0	1.0	0.0	1.0	1
+	10.0	1.0	2.5	1.0	1
+	
+	t	Xax	Ccg	Cea
+*	1.0	1.0	1.0	1.0
+	0.0	0.5	0	0
+	10.0	0.5	0	0
+	
+	t	mg	mgnn
+*	1.0	9.808	9.808
+	0.0	0.08	0.01
+	10.0	0.08	0.01
+	
+	t	dCLdF2			dCMdF2
+*	1.0	0.06678407977830864	-0.011336246026463862
+	0.0	1			1
+	160.0	1			1
+End
+
+#============
+Beam 3
+Vertical Stabilizer
+	t	x	y	z	chord
+*	1.0	10.0	1.0	1.0	1
+	1.0	1.0	0.0	3.75	1
+	11.0	1.0	0.0	1.25	1
+	
+	t	Xax	Ccg	Cea
+*	1.0	1.0	1.0	1.0
+	1.0	0.5	0	0
+	11.0	0.5	0	0
+	
+	t	mg	mgnn
+*	1.0	9.808	9.808
+	1.0	0.08	0.01
+	11.0	0.08	0.01
+	
+	t	dCLdF3			dCMdF3
+*	1.0	0.06678407977830864	-0.011336246026463862
+	1.0	1			1
+	11.0	1			1
+End
+
+
+#===========
+Beam 4
+Fuselage
+	t	x	y	z	radius
+	1.0	0	0.	0.0	0
+	11.0	10	0.	1.25	0
+End
+
+
