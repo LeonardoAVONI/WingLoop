@@ -25,84 +25,106 @@ import matplotlib.pyplot as plt
 import os
 from WingLoop_Library.Text2Python_Library import extract_states_vector
 from scipy.integrate import trapezoid
+import matlab.engine
+import fmpy
+import os
+import shutil
+from fmpy import read_model_description, extract, instantiate_fmu
 
-class PIDController:
-    """ 
-    Class defining a PID controller, defined with Kp, Ki and Kd
-    
-    The control instructions are then iterated in the time domain using discretization (Ts), written manually
-    
-    """
-    
-    def __init__(self, Kp, Ki, Kd):
-        # Initialize PID gains (as adimensional gains K's)
-        self.Kp = Kp
-        self.Ki = Ki
-        self.Kd = Kd
+class SimulinkFMUController:
+    def __init__(self, fmu_path, Dt=0.01):
+        """
+        fmu_path: full path to your .fmu file (string)
+        """
+        self.fmu_path = fmu_path
+        self.Dt = Dt
+        self.time = 0.0
+        self.unzipdir = None
+        self.fmu = None
 
-        # Initialize PID state variables
-        self.Previous_D_output = 0
-        self.Previous_I_output = 0
-        self.Previous_Error = 0
-        self.Current_Error = 0
+        # Parse the model description (returns ModelDescription object)
+        self.model_description = read_model_description(self.fmu_path)
 
-    def runPID(self,measured_variable,setpoint_variable,Ts):
-        
-        if False: #windup?
-            if np.abs(self.Previous_I_output)>10:
-                self.Previous_I_output = self.Previous_I_output*100/(np.abs(self.Previous_I_output))
-            #print(self.Previous_I_output)
-        # computing current error
-        self.Current_Error = setpoint_variable - measured_variable
+        # Extract FMU contents to a temp directory (returns the unzip path string)
+        self.unzipdir = extract(self.fmu_path)  # auto temp dir if not specified
 
-        # proportional term
-        Out_P = self.Kp*self.Current_Error
+        # Instantiate correctly:
+        # 1st arg: unzip directory (string)
+        # 2nd arg: model_description (ModelDescription object, NOT string!)
+        self.fmu = instantiate_fmu(
+            unzipdir=self.unzipdir,
+            model_description=self.model_description,
+            visible=False,
+            debug_logging=False  # change to True for FMI debug output during dev
+        )
 
-        # derivative term
-        #Out_D = -self.Previous_D_output + self.Kd*(1/Ts)*2*self.Previous_Error - self.Kd*(1/Ts)*2*self.Current_Error #trapezoidal,maybe a minus sign? WRONG
-        #Out_D = self.Kd*(1/Ts)*self.Previous_Error - self.Kd*(1/Ts)*self.Current_Error #forward #maybe there should be a minus here WRONG
-        Out_D = self.Kd*(1/Ts)*self.Current_Error - self.Kd*(1/Ts)*self.Previous_Error #from ChatGPT
+        # Optional: set initial parameters if your FMU has tunable ones
+        # fmpy.set(self.fmu, 'your_param_name', some_value)
+    def stepold(self, instantaneous_state):
+        state_array = np.array(instantaneous_state, dtype=np.float64).flatten()
 
-        # integral term
-        #Out_I = self.Previous_I_output - self.Ki*Ts*0.5*(self.Current_Error+self.Previous_Error) #trapezoidal WRONG
-        #Out_I = self.Previous_I_output - self.Ki*Ts*self.Current_Error #forward WRONG
-        #Out_I = self.Previous_I_output - self.Ki*Ts*self.Current_Error #backward WRONG
-        #Out_I = self.Previous_I_output + self.Ki * Ts * 0.5 * (self.Current_Error + self.Previous_Error) #chatgpt
-        Out_I = self.Previous_I_output + self.Ki * Ts*self.Current_Error # version for ASWING validation
-        
-        # summing up the contributions
-        Out=Out_P+Out_D+Out_I
+        # Collect all FMU input VRs
+        # Get the FMU input variable corresponding to the Bus element
+        print(self.model_description.modelVariables )
+        input_var = next((v for v in self.model_description.modelVariables if 'InBus' in v.name), None)
+        if input_var is None:
+            raise ValueError("Bus input variable not found in FMU model description")
 
-        # updating the variables value
-        self.Previous_D_output = Out_D
-        self.Previous_I_output = Out_I
-        self.Previous_Error = self.Current_Error
 
-        return Out
+        # Optionally check size
+        if len(state_array) != 1945:  # or len(input_var.start)
+            raise ValueError(f"State vector length ({len(state_array)}) does not match FMU input size (1945)")
 
-    def runPID_continuousWy(self,measured_variable,measured_derivative,setpoint_variable,Ts):
-        
-        self.Current_Error = setpoint_variable - measured_variable
+        # Set the vector input (single VR)
+        self.fmu.setReal([input_var.valueReference], [state_array.tolist()])
 
-        # proportional term
-        Out_P = self.Kp*self.Current_Error
+        # Advance FMU
+        self.fmu.doStep(currentCommunicationPoint=self.time, communicationStepSize=self.Dt)
+        self.time += self.Dt
 
-        # derivative term
-        Out_D = self.Kd*(0-measured_derivative)
+        # Get outputs
+        output_names = ['F1', 'F2', 'F3', 'F4', 'E1', 'E2']
+        output_vrs = [next((v.valueReference for v in self.model_description.modelVariables if v.name == n), None)
+                    for n in output_names]
+        output_values = self.fmu.getReal(output_vrs)
+        return dict(zip(output_names, [float(v) for v in output_values]))
 
-        # integral term
-        Out_I = self.Previous_I_output + self.Ki * Ts*self.Current_Error # version for ASWING validation
-        #Out_I = self.Previous_I_output + self.Ki * Ts * 0.5 * (self.Current_Error + self.Previous_Error) #chatgpt
-        
-        # summing up the contributions
-        Out=Out_P+Out_D+Out_I
+    def step(self, instantaneous_state):
+        state_array = np.array(instantaneous_state, dtype=np.float64).flatten()
 
-        # updating the variables value
-        self.Previous_D_output = Out_D
-        self.Previous_I_output = Out_I
-        self.Previous_Error = self.Current_Error
+        # Get all input variables for InputState[1..1945]
+        input_vars = [v for v in self.model_description.modelVariables if v.name.startswith('statein[')]
+        input_vars.sort(key=lambda v: v.valueReference)  # Ensure correct order
 
-        return Out , Out_I
+        if len(state_array) != len(input_vars):
+            raise ValueError(f"State vector length ({len(state_array)}) does not match FMU input count ({len(input_vars)})")
+
+        input_vrs = [v.valueReference for v in input_vars]
+
+        # Set all 1945 inputs at once
+        self.fmu.setReal(input_vrs, state_array.tolist())
+
+        # Advance FMU
+        self.fmu.doStep(currentCommunicationPoint=self.time, communicationStepSize=self.Dt)
+        self.time += self.Dt
+
+        # Get outputs
+        output_names = ['F1', 'F2', 'F3', 'F4', 'E1', 'E2']
+        output_vrs = [next((v.valueReference for v in self.model_description.modelVariables if v.name == n), None)
+                    for n in output_names]
+        output_values = self.fmu.getReal(output_vrs)
+        return dict(zip(output_names, [float(v) for v in output_values]))
+
+    def terminate(self):
+        """Call this when done (e.g. in WingLoop cleanup) to free resources"""
+        if self.fmu:
+            try:
+                self.fmu.terminate()
+            except:
+                pass
+        if self.unzipdir and os.path.exists(self.unzipdir):
+            shutil.rmtree(self.unzipdir, ignore_errors=True)
+
 
 class PyControl:
     
@@ -148,7 +170,31 @@ class PyControl:
         # with K either K_r_from_full or K_r_from_reduced
         # q = W_T_M@x
 
+        self.eng = None
+        self.method = "python"
+        self.Dt = 0.01
+        self.time = 0.0
 
+        if self.method in ["matlab", "simulink"]:
+            self.eng = matlab.engine.start_matlab("-nodesktop -nosplash")
+
+        if self.method == "matlab":
+            self.eng.addpath('/home/leonardo-avoni/Desktop/01_GitHub/02_WingLoop/WingLoop_Library', nargout=0)
+            self.eng.workspace['Dt'] = 0.01  # optional
+        elif self.method == "simulink":
+            # self.eng.set_param('UAV_Controller', 'SimulationCommand', 'step', nargout=0)
+            self.eng.addpath('/home/leonardo-avoni/Desktop/01_GitHub/02_WingLoop/WingLoop_Library', nargout=0)
+            self.eng.load_system('UAV_Controller')
+            self.eng.set_param('UAV_Controller', 'ReturnWorkspaceOutputs', 'on', nargout=0)
+            #self.eng.set_param('UAV_Controller', 'SimulationCommand', 'start', nargout=0)
+            #self.eng.set_param('UAV_Controller', 'SimulationCommand', 'pause', nargout=0)
+            self.eng.set_param('UAV_Controller', 'SignalLogging', 'on', nargout=0)
+
+        elif self.method == "simulink_fmu":
+            self.fmu_controller = SimulinkFMUController(
+                fmu_path="/home/leonardo-avoni/Desktop/01_GitHub/02_WingLoop/WingLoop_Library/UAV_Controller.fmu",
+                Dt=0.01
+            )
     def append_flight_data(self, instantaneous_struct):
         
         """ 
@@ -199,6 +245,114 @@ class PyControl:
 
             #self.Wy = np.append(self.Wy, instantaneous_struct["Wy"])
     
+
+    
+    
+    
+    def UAV_control_Strategy_LQR(self,instantaneous_state, Dt):
+        """ 
+        Made for LQR, for Murua, trimmed
+        
+        the correct LQR equation, including for trimming point is: utot = -K(xtot-xt) + ut
+        """
+       
+        # one could also use self.x_state_trimmed
+        # since it's just a matrix multiplication (linear) we decide to 
+        # precompute q_state_trimmed, so we only have to subtract length 32 vectors
+        #q = self.W_T_M@instantaneous_state
+        if self.method=="matlab":
+            state_ml = matlab.double(instantaneous_state.tolist())  # 1×N or Nx1
+            out_ml = self.eng.UAV_control_Strategy_LQR(state_ml, Dt, nargout=1)
+            # out_ml is Python dict because MATLAB struct → dict
+            output= {
+                "F1": float(out_ml['F1']), 
+                "F2": float(out_ml['F2']),
+                "F3": float(out_ml['F3']),
+                "F4": float(out_ml['F4']),
+                "E1": float(out_ml['E1']), 
+                "E2": float(out_ml['E2'])
+            }
+        elif self.method=="simulink_fmu":
+            output = self.fmu_controller.step(instantaneous_state)
+
+        elif self.method == "simulink":
+            state_array = np.array(instantaneous_state, dtype=np.float64).flatten()
+            if len(state_array) != 1945:
+                raise ValueError("State vector must be 1945 long")
+
+            self.eng.workspace['statein'] = matlab.double(state_array.tolist())
+
+            # Short simulation
+            self.eng.workspace['Tstart'] = self.time
+            self.eng.workspace['Tstop']  = self.time + self.Dt
+
+            out = self.eng.sim(
+                'UAV_Controller',
+                'StartTime', 'Tstart',
+                'StopTime',  'Tstop',
+                nargout=1
+            )
+
+            # === CRITICAL: Push the SimulationOutput to MATLAB workspace ===
+            self.eng.workspace['simOut'] = out
+
+            # Debug (run once, then you can comment out)
+            print("Fields in simOut:", self.eng.eval("fieldnames(simOut)", nargout=1))
+
+            # Robust extraction — works whether 1 sample or many
+            try:
+                output = {
+                    "F1": float(self.eng.eval("simOut.F1.Data(end)", nargout=1)),
+                    "F2": float(self.eng.eval("simOut.F2.Data(end)", nargout=1)),
+                    "F3": float(self.eng.eval("simOut.F3.Data(end)", nargout=1)),
+                    "F4": float(self.eng.eval("simOut.F4.Data(end)", nargout=1)),
+                    "E1": float(self.eng.eval("simOut.E1.Data(end)", nargout=1)),
+                    "E2": float(self.eng.eval("simOut.E2.Data(end)", nargout=1)),
+                }
+                print("✅ Success — Control outputs:", output)   # remove after it works
+
+            except Exception as e:
+                print("Extract failed (trying Array format fallback):", str(e))
+                # Fallback if someone accidentally set Save format = Array
+                output = {
+                    "F1": float(self.eng.eval("simOut.F1(end)", nargout=1)),
+                    "F2": float(self.eng.eval("simOut.F2(end)", nargout=1)),
+                    "F3": float(self.eng.eval("simOut.F3(end)", nargout=1)),
+                    "F4": float(self.eng.eval("simOut.F4(end)", nargout=1)),
+                    "E1": float(self.eng.eval("simOut.E1(end)", nargout=1)),
+                    "E2": float(self.eng.eval("simOut.E2(end)", nargout=1)),
+                }
+
+            self.time += self.Dt
+
+        elif self.method=="python":
+            # your existing PyControl call
+            dx = instantaneous_state-self.x_state_trimmed
+            du = self.trimmed_inputs -self.K_x@(dx)
+            
+            # with u = -K @ (q - q_trim) + u_trim
+            # with K either K_r_from_full or K_r_from_reduced
+            #du = self.trimmed_inputs - self.K_r_from_reduced@(q-self.q_state_trimmed)
+            
+            # Apply limits to du
+            du[:4] = np.clip(du[:4], -20, 20)  # Limit du[0,1,2,3] between -20 and 20
+            du[4:] = np.clip(du[4:], -10, 10)   # Limit du[4,5] between 0 and 10 #possible to make negative thrust
+                    
+            # Sending the final instructions
+            output = {}
+            output["F1"]=  du[0]
+            output["F2"]=  du[1]
+            output["F3"]=  du[2]
+            output["F4"]= du[3]
+            
+            # forcing the engine output
+            output["E1"]= du[4]
+            output["E2"]= du[5]
+        print(output)
+        return output
+    
+
+
     def UAV_control_Strategy(self,instantaneous_flight_data, Dt):
         """
         Example of a control law used for the current UAV:
@@ -266,48 +420,6 @@ class PyControl:
         output["E2"] = output["E1"]
 
         return output
-    
-    
-    
-    
-    def UAV_control_Strategy_LQR(self,instantaneous_state, Dt):
-        """ 
-        Made for LQR, for Murua, trimmed
-        
-        the correct LQR equation, including for trimming point is: utot = -K(xtot-xt) + ut
-        """
-       
-        # one could also use self.x_state_trimmed
-        # since it's just a matrix multiplication (linear) we decide to 
-        # precompute q_state_trimmed, so we only have to subtract length 32 vectors
-        #q = self.W_T_M@instantaneous_state
-        
-        dx = instantaneous_state-self.x_state_trimmed
-        du = self.trimmed_inputs -self.K_x@(dx)
-        
-        # with u = -K @ (q - q_trim) + u_trim
-        # with K either K_r_from_full or K_r_from_reduced
-        #du = self.trimmed_inputs - self.K_r_from_reduced@(q-self.q_state_trimmed)
-        
-        # Apply limits to du
-        du[:4] = np.clip(du[:4], -20, 20)  # Limit du[0,1,2,3] between -20 and 20
-        du[4:] = np.clip(du[4:], -10, 10)   # Limit du[4,5] between 0 and 10 #possible to make negative thrust
-                
-        # Sending the final instructions
-        output = {}
-        output["F1"]=  du[0]
-        output["F2"]=  du[1]
-        output["F3"]=  du[2]
-        output["F4"]= du[3]
-        
-        # forcing the engine output
-        output["E1"]= du[4]
-        output["E2"]= du[5]
-
-        return output
-    
-
-
     
     
     
@@ -491,5 +603,82 @@ class PyControl:
 
 
 
+class PIDController:
+    """ 
+    Class defining a PID controller, defined with Kp, Ki and Kd
+    
+    The control instructions are then iterated in the time domain using discretization (Ts), written manually
+    
+    """
+    
+    def __init__(self, Kp, Ki, Kd):
+        # Initialize PID gains (as adimensional gains K's)
+        self.Kp = Kp
+        self.Ki = Ki
+        self.Kd = Kd
+
+        # Initialize PID state variables
+        self.Previous_D_output = 0
+        self.Previous_I_output = 0
+        self.Previous_Error = 0
+        self.Current_Error = 0
+
+    def runPID(self,measured_variable,setpoint_variable,Ts):
+        
+        if False: #windup?
+            if np.abs(self.Previous_I_output)>10:
+                self.Previous_I_output = self.Previous_I_output*100/(np.abs(self.Previous_I_output))
+            #print(self.Previous_I_output)
+        # computing current error
+        self.Current_Error = setpoint_variable - measured_variable
+
+        # proportional term
+        Out_P = self.Kp*self.Current_Error
+
+        # derivative term
+        #Out_D = -self.Previous_D_output + self.Kd*(1/Ts)*2*self.Previous_Error - self.Kd*(1/Ts)*2*self.Current_Error #trapezoidal,maybe a minus sign? WRONG
+        #Out_D = self.Kd*(1/Ts)*self.Previous_Error - self.Kd*(1/Ts)*self.Current_Error #forward #maybe there should be a minus here WRONG
+        Out_D = self.Kd*(1/Ts)*self.Current_Error - self.Kd*(1/Ts)*self.Previous_Error #from ChatGPT
+
+        # integral term
+        #Out_I = self.Previous_I_output - self.Ki*Ts*0.5*(self.Current_Error+self.Previous_Error) #trapezoidal WRONG
+        #Out_I = self.Previous_I_output - self.Ki*Ts*self.Current_Error #forward WRONG
+        #Out_I = self.Previous_I_output - self.Ki*Ts*self.Current_Error #backward WRONG
+        #Out_I = self.Previous_I_output + self.Ki * Ts * 0.5 * (self.Current_Error + self.Previous_Error) #chatgpt
+        Out_I = self.Previous_I_output + self.Ki * Ts*self.Current_Error # version for ASWING validation
+        
+        # summing up the contributions
+        Out=Out_P+Out_D+Out_I
+
+        # updating the variables value
+        self.Previous_D_output = Out_D
+        self.Previous_I_output = Out_I
+        self.Previous_Error = self.Current_Error
+
+        return Out
+
+    def runPID_continuousWy(self,measured_variable,measured_derivative,setpoint_variable,Ts):
+        
+        self.Current_Error = setpoint_variable - measured_variable
+
+        # proportional term
+        Out_P = self.Kp*self.Current_Error
+
+        # derivative term
+        Out_D = self.Kd*(0-measured_derivative)
+
+        # integral term
+        Out_I = self.Previous_I_output + self.Ki * Ts*self.Current_Error # version for ASWING validation
+        #Out_I = self.Previous_I_output + self.Ki * Ts * 0.5 * (self.Current_Error + self.Previous_Error) #chatgpt
+        
+        # summing up the contributions
+        Out=Out_P+Out_D+Out_I
+
+        # updating the variables value
+        self.Previous_D_output = Out_D
+        self.Previous_I_output = Out_I
+        self.Previous_Error = self.Current_Error
+
+        return Out , Out_I
 
 

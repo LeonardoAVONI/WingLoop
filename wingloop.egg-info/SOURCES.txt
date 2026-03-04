@@ -3,6 +3,16 @@ WingLoop_Library/Control_Library.py
 WingLoop_Library/Text2Python_Library.py
 WingLoop_Library/WingLoop_Library.py
 WingLoop_Library/__init__.py
+old/01_WingLoop.py
+old/py_00_UAV_Files/99_View_Geometry.py
+old/py_00_UAV_Files/test.py
+old/py_00_UAV_Files/Iteration Study/iteration_study.py
+old/py_00_UAV_Files/Varios_Ts_Data/01_Plot_Various_Ts_Results.py
+old/py_00_UAV_Files/Various_K_Data/02_Plot_Various_K_Results.py
+old/py_02_Utilities/Aswing_Director_Library.py
+old/py_02_Utilities/Control_Library.py
+old/py_02_Utilities/Dynamics_Tracking_Library.py
+old/py_02_Utilities/text2python_library.py
 wingloop.egg-info/PKG-INFO
 wingloop.egg-info/SOURCES.txt
 wingloop.egg-info/dependency_links.txt

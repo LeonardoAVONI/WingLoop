@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<fmiModelDescription fmiVersion="2.0" generationDateAndTime="2026-03-03T17:20:53Z" generationTool="Simulink (R2025b)" guid="{3a962f73-119b-9e3b-3b68-05b2ce29d5a4}" modelName="UAV_Controller" numberOfEventIndicators="0" variableNamingConvention="structured" version="1.4">
+  <CoSimulation canBeInstantiatedOnlyOncePerProcess="true" canGetAndSetFMUstate="true" canHandleVariableCommunicationStepSize="false" canNotUseMemoryManagementFunctions="true" canSerializeFMUstate="true" modelIdentifier="UAV_Controller"/>
+  <DefaultExperiment startTime="0" stepSize="0.01" stopTime="10"/>
+  <VendorAnnotations>
+    <Tool name="Simulink">
+      <Simulink>
+        <ImportCompatibility FMUProduct="standalone FMU" canSourceFileCodeGeneration="false" requireMATLABOnPath="no" requireRelease="all"/>
+        <SimulinkModelInterface>
+          <Inport blockPath="UAV_Controller/Input state vector" dataType="double" dimension="[1]" portName="Input state vector" portNumber="1" sampleTime="[0.01    0]" uniquePortName="InputStateVector" unit=""/>
+          <Outport blockPath="UAV_Controller/Output Vecotr" dataType="double" dimension="[6]" portName="Output Vecotr" portNumber="1" sampleTime="[Inf   0]" uniquePortName="OutputVecotr" unit=""/>
+        </SimulinkModelInterface>
+      </Simulink>
+    </Tool>
+  </VendorAnnotations>
+  <ModelVariables>
+    <ScalarVariable causality="input" description="Input state vector" name="InputStateVector" valueReference="0" variability="continuous">
+      <Real start="0"/>
+      <!--Index = 1-->
+    </ScalarVariable>
+    <ScalarVariable causality="output" description="Output Vecotr(1)" initial="calculated" name="OutputVecotr[1]" valueReference="1" variability="continuous">
+      <Real/>
+      <!--Index = 2-->
+    </ScalarVariable>
+    <ScalarVariable causality="output" description="Output Vecotr(2)" initial="calculated" name="OutputVecotr[2]" valueReference="2" variability="continuous">
+      <Real/>
+      <!--Index = 3-->
+    </ScalarVariable>
+    <ScalarVariable causality="output" description="Output Vecotr(3)" initial="calculated" name="OutputVecotr[3]" valueReference="3" variability="continuous">
+      <Real/>
+      <!--Index = 4-->
+    </ScalarVariable>
+    <ScalarVariable causality="output" description="Output Vecotr(4)" initial="calculated" name="OutputVecotr[4]" valueReference="4" variability="continuous">
+      <Real/>
+      <!--Index = 5-->
+    </ScalarVariable>
+    <ScalarVariable causality="output" description="Output Vecotr(5)" initial="calculated" name="OutputVecotr[5]" valueReference="5" variability="continuous">
+      <Real/>
+      <!--Index = 6-->
+    </ScalarVariable>
+    <ScalarVariable causality="output" description="Output Vecotr(6)" initial="calculated" name="OutputVecotr[6]" valueReference="6" variability="continuous">
+      <Real/>
+      <!--Index = 7-->
+    </ScalarVariable>
+    <ScalarVariable causality="independent" description="time" name="time" valueReference="7" variability="continuous">
+      <Real/>
+      <!--Index = 8-->
+    </ScalarVariable>
+  </ModelVariables>
+  <ModelStructure>
+    <Outputs>
+      <Unknown index="2"/>
+      <Unknown index="3"/>
+      <Unknown index="4"/>
+      <Unknown index="5"/>
+      <Unknown index="6"/>
+      <Unknown index="7"/>
+    </Outputs>
+    <InitialUnknowns>
+      <Unknown index="2"/>
+      <Unknown index="3"/>
+      <Unknown index="4"/>
+      <Unknown index="5"/>
+      <Unknown index="6"/>
+      <Unknown index="7"/>
+    </InitialUnknowns>
+  </ModelStructure>
+</fmiModelDescription>

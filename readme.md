@@ -9,3 +9,8 @@ The exact behavior of how the code works is detailed in the correspondent report
 	-the state is read by the python/matlab control strategy, that then figures out what 
 	the next aileron+engine instruction should be for the aircraft to fulfil the instructions
 Those steps are iterated until the N iterations are done
+
+
+To install:
+pip install -e 02_WingLoop
+(to be typed in the root folder of 02_WingLoop)

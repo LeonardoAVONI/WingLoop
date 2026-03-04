@@ -85,6 +85,7 @@ class WingLoop:
         timer_text (float): timer used by default for the Aswing_Director functions
         finished_writing_check_timestep (float): timer used to check for the last update on the size of the state file written by ASWING
         """
+        print(aswing_path)
         # storing the variables to self.
         self.sim_directory = sim_directory
         self.print_output = print_output #used for the print output of the Aswing_Director

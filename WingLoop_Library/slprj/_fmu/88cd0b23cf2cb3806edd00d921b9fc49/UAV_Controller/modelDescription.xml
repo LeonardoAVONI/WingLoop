@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<fmiModelDescription fmiVersion="2.0" generationDateAndTime="2026-03-03T18:09:22Z" generationTool="Simulink (R2025b)" guid="{324f35c5-76c0-ced0-ef25-73b95bc1ddc6}" modelName="UAV_Controller" numberOfEventIndicators="0" variableNamingConvention="structured" version="1.8">
+  <CoSimulation canBeInstantiatedOnlyOncePerProcess="true" canGetAndSetFMUstate="true" canHandleVariableCommunicationStepSize="false" canNotUseMemoryManagementFunctions="true" canSerializeFMUstate="true" modelIdentifier="UAV_Controller"/>
+  <DefaultExperiment startTime="0" stepSize="0.01" stopTime="10"/>
+  <VendorAnnotations>
+    <Tool name="Simulink">
+      <Simulink>
+        <ImportCompatibility FMUProduct="standalone FMU" canSourceFileCodeGeneration="false" requireMATLABOnPath="no" requireRelease="all"/>
+        <SimulinkModelInterface>
+          <Inport blockPath="UAV_Controller/In Bus Element" dataType="double" dimension="[1]" portName="In Bus Element" portNumber="1" sampleTime="[0.01    0]" uniquePortName="InBusElement" unit=""/>
+          <Outport blockPath="UAV_Controller/F1" dataType="double" dimension="[1]" portName="F1" portNumber="1" sampleTime="[Inf   0]" uniquePortName="F1" unit=""/>
+          <Outport blockPath="UAV_Controller/F2" dataType="double" dimension="[1]" portName="F2" portNumber="2" sampleTime="[Inf   0]" uniquePortName="F2" unit=""/>
+          <Outport blockPath="UAV_Controller/F3" dataType="double" dimension="[1]" portName="F3" portNumber="3" sampleTime="[Inf   0]" uniquePortName="F3" unit=""/>
+          <Outport blockPath="UAV_Controller/F4" dataType="double" dimension="[1]" portName="F4" portNumber="4" sampleTime="[Inf   0]" uniquePortName="F4" unit=""/>
+          <Outport blockPath="UAV_Controller/F5" dataType="double" dimension="[1]" portName="F5" portNumber="5" sampleTime="[Inf   0]" uniquePortName="F5" unit=""/>
+          <Outport blockPath="UAV_Controller/F6" dataType="double" dimension="[1]" portName="F6" portNumber="6" sampleTime="[Inf   0]" uniquePortName="F6" unit=""/>
+        </SimulinkModelInterface>
+      </Simulink>
+    </Tool>
+  </VendorAnnotations>
+  <ModelVariables>
+    <ScalarVariable causality="output" description="F1" initial="calculated" name="F1" valueReference="0" variability="continuous">
+      <Real/>
+      <!--Index = 1-->
+    </ScalarVariable>
+    <ScalarVariable causality="output" description="F2" initial="calculated" name="F2" valueReference="1" variability="continuous">
+      <Real/>
+      <!--Index = 2-->
+    </ScalarVariable>
+    <ScalarVariable causality="output" description="F3" initial="calculated" name="F3" valueReference="2" variability="continuous">
+      <Real/>
+      <!--Index = 3-->
+    </ScalarVariable>
+    <ScalarVariable causality="output" description="F4" initial="calculated" name="F4" valueReference="3" variability="continuous">
+      <Real/>
+      <!--Index = 4-->
+    </ScalarVariable>
+    <ScalarVariable causality="output" description="F5" initial="calculated" name="F5" valueReference="4" variability="continuous">
+      <Real/>
+      <!--Index = 5-->
+    </ScalarVariable>
+    <ScalarVariable causality="output" description="F6" initial="calculated" name="F6" valueReference="5" variability="continuous">
+      <Real/>
+      <!--Index = 6-->
+    </ScalarVariable>
+    <ScalarVariable causality="independent" description="time" name="time" valueReference="6" variability="continuous">
+      <Real/>
+      <!--Index = 7-->
+    </ScalarVariable>
+  </ModelVariables>
+  <ModelStructure>
+    <Outputs>
+      <Unknown index="1"/>
+      <Unknown index="2"/>
+      <Unknown index="3"/>
+      <Unknown index="4"/>
+      <Unknown index="5"/>
+      <Unknown index="6"/>
+    </Outputs>
+    <InitialUnknowns>
+      <Unknown index="1"/>
+      <Unknown index="2"/>
+      <Unknown index="3"/>
+      <Unknown index="4"/>
+      <Unknown index="5"/>
+      <Unknown index="6"/>
+    </InitialUnknowns>
+  </ModelStructure>
+</fmiModelDescription>
