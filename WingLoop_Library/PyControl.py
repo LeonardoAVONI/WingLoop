@@ -10,15 +10,6 @@ Last modified: 29/05/2025
 
 ====================================================================================
 
-Description:
-This Python class provides the following
-    storage space for timeseries describing the aircraft flight
-    storage space for control laws
-    
-The function used by WingLoop for control is PyControl.UAV_control_Strategy(..). 
-The other functions may be used by that method to help define control laws
-
-====================================================================================
 """
 import numpy as np
 import matplotlib.pyplot as plt
@@ -32,66 +23,18 @@ import shutil
 from fmpy import read_model_description, extract, instantiate_fmu
 
 
-
-
 class PyControl:
     
     """
     Control class, containing the various control laws and history tracking of the variables used in Python
     """
-    def __init__(self,sim_directory):
-        
-        self.PyControlStorage = {}
-        # Dynamic Tracking Variables
-        Filename: 
-        Converged: True False
-        Time
-        
-        self.EarthX = None
-        self.EarthY = None
-        self.EarthZ = None
-
-        self.PITCH = None
-        self.ROLL = None
-        self.YAW = None
-
-        self.ALPHA = None
-        self.BETA = None
-        self.VELOCITY = None
-
-
- Velocity: 30.067     m/s      Heading:-0.25795E-01 deg      earth X: -2.70211     m      
- Beta    : .48011E-01 deg      Elev.  :  5.4368     deg      earth Y: 0.355939E-03 m      
- Alpha   : 5.4277     deg      Bank   : 0.50998E-01 deg      earth Z: 0.206801E-03 m      
- sum Mx  : .46573E-03 N-m        Wx   :-0.37361E-01 deg/s     Wdotx :  9.93728     deg/s^2
- sum My  : .26519E-04 N-m        Wy   :  13.168     deg/s     Wdoty :  21.2797     deg/s^2
- sum Mz  :-.10850E-03 N-m        Wz   : 0.51964     deg/s     Wdotz :  4.26838     deg/s^2
- sum Fx  : 0.0000     N          Ux   : -29.921     m/s       Udotx :-0.981660     m/s^2  
- sum Fy  : .57195E-05 N          Uy   : 0.25189E-01 m/s       Udoty : 0.994358E-01 m/s^2  
- sum Fz  :-.86717E-04 N          Uz   : -2.8413     m/s       Udotz : 0.560755E-01 m/s^2   
-
- Lift    :  705.16998291015625     N        Density: 0.89900285005569458E-01 kg/m^3  Ref.Area:  31.817699432373047     m^2    
- Weight  :  731.67608642578125     N        Dyn.Pr.:  40.620231628417969     N/m^2   Ref.Span:  31.817699432373047     m      
- Load Fac:  1.0000007152557373              VIAS   :  30.061201095581055     m/s     Ref.Chrd:  1.0000000000000000     m      
- Mach    : 0.10190215706825256              VTAS   :  30.061155319213867     m/s     MachPG  :  0.0000000000000000            
-L :  0.5456        CD :   0.00304       L/D :  179.36        
-Cm :  0.0822       CDi :   0.00384        e  :  0.7565      
-
-
-
-        
-        # AIAA Time check and Validation
-        # Kp=7 Ki=30 Kd=8 (from Theta to Elevator)
-        
-        self.PID_controller = PIDController(Kp=7, Ki=30, Kd=8) # for K=1
-        #self.PID_controller = PIDController(Kp=2, Ki=0.5, Kd=0.5) # for K=10
+    def __init__(self,control_directory,startup_file,control_file):
         
 
         self.x_state_trimmed = extract_states_vector("initial_state")
-        self.trimmed_inputs = self.x_state_trimmed[-6:] #recording the value f the last 6 elements
-        #self.K_r_from_full = np.load('K_r_from_full.npy')
-        #self.K_r_from_reduced = np.load('K_r_from_reduced.npy')
-        self.K_x = np.load('K_x.npy')
+        self.trimmed_inputs = self.x_state_trimmed[-6:]
+        
+        #self.K_x = np.load('K_x.npy')
         #self.W_T_M = np.load('W_T_M.npy')
         
         #self.q_state_trimmed = self.W_T_M@self.x_state_trimmed #trimmed modal state
@@ -129,56 +72,6 @@ Cm :  0.0822       CDi :   0.00384        e  :  0.7565
                 fmu_path=fmupath,
                 Dt=0.01
             )
-    def append_flight_data(self, instantaneous_struct):
-        
-        """ 
-        This function allows to append data available from the text file provided via ASWING to local variables in Python
-        thus creating a time-history of the variables, available in Python
-        
-        Note that the time discretization used is Ts*K (sampling time used by aswing * number of aswing iterations per python iteration)
-        """
-        # Check if the arrays are initialized
-
-        if self.TIME is None:
-            # If they aren't, initialize them
-            self.TIME = np.array([instantaneous_struct["Time"]])
-
-            self.PITCH = np.array([instantaneous_struct["Pitch"]])
-            self.ROLL = np.array([instantaneous_struct["Bank"]])
-            self.YAW = np.array([instantaneous_struct["Heading"]])
-
-            self.EarthX = np.array([instantaneous_struct["earthX"]])
-            self.EarthY = np.array([instantaneous_struct["earthY"]])
-            self.EarthZ = np.array([instantaneous_struct["earthZ"]])
-
-            self.ALPHA = np.array([instantaneous_struct["Alpha"]])
-            self.BETA = np.array([instantaneous_struct["Beta"]])
-            self.VELOCITY = np.array([instantaneous_struct["Velocity"]])
-
-            #self.F2 = np.array([instantaneous_struct["F2"]])
-            
-            #self.Wy = np.array([instantaneous_struct["Wy"]])
-
-        else:
-            # If they are initialized, append the new values
-            self.TIME = np.append(self.TIME, instantaneous_struct["Time"])
-
-            self.PITCH = np.append(self.PITCH, instantaneous_struct["Pitch"])
-            self.ROLL = np.append(self.ROLL, instantaneous_struct["Bank"])
-            self.YAW = np.append(self.YAW, instantaneous_struct["Heading"])
-
-            self.EarthX = np.append(self.EarthX, instantaneous_struct["earthX"])
-            self.EarthY = np.append(self.EarthY, instantaneous_struct["earthY"])
-            self.EarthZ = np.append(self.EarthZ, instantaneous_struct["earthZ"])
-
-            self.ALPHA = np.append(self.ALPHA, instantaneous_struct["Alpha"])
-            self.BETA = np.append(self.BETA, instantaneous_struct["Beta"])
-            self.VELOCITY = np.append(self.VELOCITY, instantaneous_struct["Velocity"])
-
-            #self.F2 = np.append(self.F2, instantaneous_struct["F2"])
-
-            #self.Wy = np.append(self.Wy, instantaneous_struct["Wy"])
-    
 
     
     
@@ -434,82 +327,29 @@ class SimulinkFMUController:
 
 
 
-class PIDController:
-    """ 
-    Class defining a PID controller, defined with Kp, Ki and Kd
+if __name__=="__main__":
+    ControlInstance = PyControl(control_directory = "/test_files/test_controllers",
+                                startup_file,
+                                control_file)
     
-    The control instructions are then iterated in the time domain using discretization (Ts), written manually
-    
-    """
-    
-    def __init__(self, Kp, Ki, Kd):
-        # Initialize PID gains (as adimensional gains K's)
-        self.Kp = Kp
-        self.Ki = Ki
-        self.Kd = Kd
+""" 
+I have here the following code. This code describes the PyControl class.
 
-        # Initialize PID state variables
-        self.Previous_D_output = 0
-        self.Previous_I_output = 0
-        self.Previous_Error = 0
-        self.Current_Error = 0
+The idea is that at class startup, Pycontrol would require a directory where the control files would be located, as well as "the name of the control files"
 
-    def runPID(self,measured_variable,setpoint_variable,Ts):
-        
-        if False: #windup?
-            if np.abs(self.Previous_I_output)>10:
-                self.Previous_I_output = self.Previous_I_output*100/(np.abs(self.Previous_I_output))
-            #print(self.Previous_I_output)
-        # computing current error
-        self.Current_Error = setpoint_variable - measured_variable
+The methods available are:
+    python: if control files are .py files
+    matlab: if control files are .m files
+    simulink: if control files are .slx files
+    simulink_fmu: if control files are .fmu files
 
-        # proportional term
-        Out_P = self.Kp*self.Current_Error
+The problem I have at the moment is: for control, I need to have "two" steps (regardless of whether I use python, matlab, simulink, r simulink_fmu):
+    step 1: loading what is needed for the controller to use (control matrices, eigenvalues, requirements, weighhts matrices...) and perform some preliminary math to build what will be used by the controller
+    step 2: as an option/alternative to step1, I would need to allow the user to load some pre-computed elements (if for example teh control matrices math was already doe, instead of recomputing them how about we just load them from a known file?)
+    step 3: while the simulation is running timestep after timestep, the current time model state is fed to UAV_control_Strategy, that takes care of computing the controls to apply on the model. Depending on the method, the controller will be either  in matlab simulink or python
 
-        # derivative term
-        #Out_D = -self.Previous_D_output + self.Kd*(1/Ts)*2*self.Previous_Error - self.Kd*(1/Ts)*2*self.Current_Error #trapezoidal,maybe a minus sign? WRONG
-        #Out_D = self.Kd*(1/Ts)*self.Previous_Error - self.Kd*(1/Ts)*self.Current_Error #forward #maybe there should be a minus here WRONG
-        Out_D = self.Kd*(1/Ts)*self.Current_Error - self.Kd*(1/Ts)*self.Previous_Error #from ChatGPT
+I need a way to provide to PyControl all of this. I need a way to make the thing general for Py, m, slx, fmu.
+Take care that I need a way to make the pre-control variables accessible during the time-transient simulation
 
-        # integral term
-        #Out_I = self.Previous_I_output - self.Ki*Ts*0.5*(self.Current_Error+self.Previous_Error) #trapezoidal WRONG
-        #Out_I = self.Previous_I_output - self.Ki*Ts*self.Current_Error #forward WRONG
-        #Out_I = self.Previous_I_output - self.Ki*Ts*self.Current_Error #backward WRONG
-        #Out_I = self.Previous_I_output + self.Ki * Ts * 0.5 * (self.Current_Error + self.Previous_Error) #chatgpt
-        Out_I = self.Previous_I_output + self.Ki * Ts*self.Current_Error # version for ASWING validation
-        
-        # summing up the contributions
-        Out=Out_P+Out_D+Out_I
-
-        # updating the variables value
-        self.Previous_D_output = Out_D
-        self.Previous_I_output = Out_I
-        self.Previous_Error = self.Current_Error
-
-        return Out
-
-    def runPID_continuousWy(self,measured_variable,measured_derivative,setpoint_variable,Ts):
-        
-        self.Current_Error = setpoint_variable - measured_variable
-
-        # proportional term
-        Out_P = self.Kp*self.Current_Error
-
-        # derivative term
-        Out_D = self.Kd*(0-measured_derivative)
-
-        # integral term
-        Out_I = self.Previous_I_output + self.Ki * Ts*self.Current_Error # version for ASWING validation
-        #Out_I = self.Previous_I_output + self.Ki * Ts * 0.5 * (self.Current_Error + self.Previous_Error) #chatgpt
-        
-        # summing up the contributions
-        Out=Out_P+Out_D+Out_I
-
-        # updating the variables value
-        self.Previous_D_output = Out_D
-        self.Previous_I_output = Out_I
-        self.Previous_Error = self.Current_Error
-
-        return Out , Out_I
-
-
+How can I do it?
+"""

@@ -100,11 +100,11 @@ class WingLoop:
                                            wait_time=timer_text, 
                                            finished_writing_file_check_timestep=finished_writing_check_timestep)
         self.ASW_handler.start_aswing(directory=sim_directory,filename=asw_filename,print_output=self.print_output)
-        
+            
+    def Launch_WingLoop_Control(self,sim_directory):
         # create a Python Instance, for control reasons. It stores timeseries and control laws
         # the exact controller used is in UAV_control_Strategy (modifiable)
         self.PyControl = PyControl(sim_directory)
-        
                 
     def Load_Files(self,filename):
         """
