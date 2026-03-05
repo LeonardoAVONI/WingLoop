@@ -31,7 +31,7 @@ def initialize_data_dict(requested, rename_map=None, latex=None):
 
     data = {
         "ModelName": None,
-        "States": None,
+        "ModelStates": [],
         "ModelVariables": {}
     }
 
@@ -56,7 +56,7 @@ def initialize_control_dict(control_elements, default_value=0.0):
     """
     return {elem: default_value for elem in control_elements}
 
-def read_aswing_file(filepath, data_dict, rename_map=None):
+def read_aswing_file(filepath, data_dict, rename_map=None, RecordStateHistory=False):
     if rename_map is None:
         rename_map = {}
 
@@ -112,7 +112,10 @@ def read_aswing_file(filepath, data_dict, rename_map=None):
             continue
         if "ENDEDPRINTINGSTATES" in stripped:
             recording_states = False
-            data_dict["States"] = np.array(states)
+            if RecordStateHistory:
+                data_dict["ModelStates"].append(np.array(states))
+            else:
+                data_dict["ModelStates"] = np.array(states)
             continue
         if recording_states:
             try:
@@ -148,12 +151,20 @@ def print_aswing_summary(data_dict, max_vars_per_line=4):
 
     print(f"\nModel Name      : {data_dict.get('ModelName')}")
 
-    states = data_dict.get("States")
-    if states is not None:
-        print(f"States length   : {len(states)}")
-        print(f"States preview  : {states[:5]} ... {states[-5:]}")
+    model_states = data_dict.get("ModelStates")
+    if isinstance(model_states, list):
+        print(f"ModelStates history length: {len(model_states)}")
+        if model_states:
+            last_states = model_states[-1]
+            print(f"Last ModelStates length: {len(last_states)}")
+            print(f"Last ModelStates preview: {last_states[:5]} ... {last_states[-5:]}")
+        else:
+            print("ModelStates          : Empty history")
+    elif model_states is not None:
+        print(f"ModelStates length   : {len(model_states)}")
+        print(f"ModelStates preview  : {model_states[:5]} ... {model_states[-5:]}")
     else:
-        print("States          : None")
+        print("ModelStates          : None")
 
     print("\nModel Variables:")
     print("-"*70)
@@ -210,28 +221,29 @@ def scientific_to_decimal(sci_str):
 
 def python2text(filename, control):
     """
-    Writes a simple ASWING time-history control file using the provided control dictionary.
+    Writes an ASWING time-history control file using the provided control dictionary.
+    
+    The header will be exactly: "time F1 F2 ..." (no leading space after "time").
     
     Parameters:
-        filename : str, path to the output control file (e.g. "controls.dat")
-        control  : dict, must contain all required control keys ("F1", "F2", "E1", etc.)
-                   Keys determine both the column order and the values.
-    
-    Raises:
-        KeyError if any expected control is missing (but since we assume the dict is complete,
-        this is considered a programming error upstream).
+        filename : str, path to the output control file
+        control  : dict with control keys ("F1", "F2", "E1", etc.) and their values
+                   The order of columns = order of keys in the dictionary
     """
-    # The column order = insertion order of keys in the dict (Python 3.7+)
-    control_elements = list(control.keys())
+    # Get the control names in the order they appear in the dict
+    control_names = list(control.keys())
     
-    header = " time " + " ".join(control_elements)+" "+ "\n"
+    # Header: "time F1 F2 F3 ..." (no space before first control name)
+    header = "time " + " ".join(control_names) + "\n"
     
-    # Convert values to strings
+    # Convert values to strings (ASWING expects plain numbers)
     values = [str(value) for value in control.values()]
     
-    line1 = " 0.0\t" + "\t".join(values) + "\n"
-    line2 = " 1000.0\t" + "\t".join(values)
+    # Two constant time steps (common simple format)
+    line1 = "0.0\t" + "\t".join(values) + "\n"
+    line2 = "1000.0\t" + "\t".join(values)
     
+    # Combine
     content = header + line1 + line2
     
     with open(filename, "w") as f:
@@ -314,7 +326,8 @@ if __name__=="__main__":
     data_metric = initialize_data_dict(requested, rename_map, latex)   # ← added rename_map here
 
     for i in range(3):
-        data_metric = read_aswing_file("testfiles/ASWING_test_output_metric", data_metric, rename_map)
+        data_metric = read_aswing_file("testfiles/ASWING_test_output_metric", data_metric, rename_map,RecordStateHistory=True)
+    print_aswing_summary(data_metric)
 
     data_imperial = initialize_data_dict(requested, rename_map, latex)   # ← added rename_map here
     data_imperial = read_aswing_file("testfiles/ASWING_test_output_imperial", data_imperial, rename_map)

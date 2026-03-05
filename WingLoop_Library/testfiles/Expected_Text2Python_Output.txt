@@ -1,89 +1,89 @@
-
 ======================================================================
 ASWING PARSER SUMMARY
 ======================================================================
 
 Model Name      : Flexible HALE 3, Murua et al. 2012
-States length   : 1945
-States preview  : [ 7.10374909e-03 -1.53360357e+01  3.97384977e+00 -4.23270404e-01
+ModelStates history length: 3
+Last ModelStates length: 1945
+Last ModelStates preview: [ 7.10374909e-03 -1.53360357e+01  3.97384977e+00 -4.23270404e-01
   1.09440545e-02] ... [-15.3355312    3.97540665  -0.4233101    9.5         10.5       ]
 
 Model Variables:
 ----------------------------------------------------------------------
-Time            | n=1    | last=0.09            | unit=s
-earth X         | n=1    | last=-2.70201        | unit=m
-earth Y         | n=1    | last=0.00035593      | unit=m
-earth Z         | n=1    | last=0.000206852     | unit=m
+Time            | n=3    | last=0.09            | unit=s
+earth X         | n=3    | last=-2.70201        | unit=m
+earth Y         | n=3    | last=0.00035593      | unit=m
+earth Z         | n=3    | last=0.000206852     | unit=m
 
-Heading         | n=1    | last=-0.0257948      | unit=deg
-Elev.           | n=1    | last=5.43686         | unit=deg
-Bank            | n=1    | last=0.0509945       | unit=deg
-Alpha           | n=1    | last=5.42449         | unit=deg
+Heading         | n=3    | last=-0.0257948      | unit=deg
+Elev.           | n=3    | last=5.43686         | unit=deg
+Bank            | n=3    | last=0.0509945       | unit=deg
+Alpha           | n=3    | last=5.42449         | unit=deg
 
-Beta            | n=1    | last=0.0480061       | unit=deg
-Velocity        | n=1    | last=30.0612         | unit=m/s
-Wx              | n=1    | last=-0.0373682      | unit=deg/s
-Wy              | n=1    | last=13.1662         | unit=deg/s
+Beta            | n=3    | last=0.0480061       | unit=deg
+Velocity        | n=3    | last=30.0612         | unit=m/s
+Wx              | n=3    | last=-0.0373682      | unit=deg/s
+Wy              | n=3    | last=13.1662         | unit=deg/s
 
-Wz              | n=1    | last=0.519663        | unit=deg/s
-Wdotx           | n=1    | last=9.93744         | unit=deg/s^2
-Wdoty           | n=1    | last=21.2759         | unit=deg/s^2
-Wdotz           | n=1    | last=4.26856         | unit=deg/s^2
+Wz              | n=3    | last=0.519663        | unit=deg/s
+Wdotx           | n=3    | last=9.93744         | unit=deg/s^2
+Wdoty           | n=3    | last=21.2759         | unit=deg/s^2
+Wdotz           | n=3    | last=4.26856         | unit=deg/s^2
 
-Ux              | n=1    | last=-29.9265        | unit=m/s
-Uy              | n=1    | last=0.0251872       | unit=m/s
-Uz              | n=1    | last=-2.8418         | unit=m/s
-Udotx           | n=1    | last=-0.981636       | unit=m/s^2
+Ux              | n=3    | last=-29.9265        | unit=m/s
+Uy              | n=3    | last=0.0251872       | unit=m/s
+Uz              | n=3    | last=-2.8418         | unit=m/s
+Udotx           | n=3    | last=-0.981636       | unit=m/s^2
 
-Udoty           | n=1    | last=0.0994361       | unit=m/s^2
-Udotz           | n=1    | last=0.0560757       | unit=m/s^2
-sum Mx          | n=1    | last=0.000465028     | unit=N-m
-sum My          | n=1    | last=2.65837e-05     | unit=N-m
+Udoty           | n=3    | last=0.0994361       | unit=m/s^2
+Udotz           | n=3    | last=0.0560757       | unit=m/s^2
+sum Mx          | n=3    | last=0.000465028     | unit=N-m
+sum My          | n=3    | last=2.65837e-05     | unit=N-m
 
-sum Mz          | n=1    | last=-0.000108719    | unit=N-m
-sum Fx          | n=1    | last=1e-09           | unit=N
-sum Fy          | n=1    | last=5.71751e-06     | unit=N
-sum Fz          | n=1    | last=-8.67583e-05    | unit=N
+sum Mz          | n=3    | last=-0.000108719    | unit=N-m
+sum Fx          | n=3    | last=1e-09           | unit=N
+sum Fy          | n=3    | last=5.71751e-06     | unit=N
+sum Fz          | n=3    | last=-8.67583e-05    | unit=N
 
-Lift            | n=1    | last=705.17          | unit=N
-Density         | n=1    | last=0.0899003       | unit=kg/m^3
-Ref.Area        | n=1    | last=31.8177         | unit=m^2
-Weight          | n=1    | last=731.676         | unit=N
+Lift            | n=3    | last=705.17          | unit=N
+Density         | n=3    | last=0.0899003       | unit=kg/m^3
+Ref.Area        | n=3    | last=31.8177         | unit=m^2
+Weight          | n=3    | last=731.676         | unit=N
 
-Dyn.Pr.         | n=1    | last=40.6202         | unit=N/m^2
-Ref.Span        | n=1    | last=31.8177         | unit=m
-Load Fac        | n=1    | last=1               | unit=-
-VIAS            | n=1    | last=30.0612         | unit=m/s
+Dyn.Pr.         | n=3    | last=40.6202         | unit=N/m^2
+Ref.Span        | n=3    | last=31.8177         | unit=m
+Load Fac        | n=3    | last=1               | unit=-
+VIAS            | n=3    | last=30.0612         | unit=m/s
 
-Ref.Chrd        | n=1    | last=1               | unit=m
-Mach            | n=1    | last=0.101902        | unit=-
-VTAS            | n=1    | last=30.0612         | unit=m/s
-MachPG          | n=1    | last=0               | unit=-
+Ref.Chrd        | n=3    | last=1               | unit=m
+Mach            | n=3    | last=0.101902        | unit=-
+VTAS            | n=3    | last=30.0612         | unit=m/s
+MachPG          | n=3    | last=0               | unit=-
 
-CL              | n=1    | last=0.5456          | unit=-
-CD              | n=1    | last=0.00304         | unit=-
-L/D             | n=1    | last=179.36          | unit=-
-Cl'             | n=1    | last=-0.00253        | unit=-
+CL              | n=3    | last=0.5456          | unit=-
+CD              | n=3    | last=0.00304         | unit=-
+L/D             | n=3    | last=179.36          | unit=-
+Cl'             | n=3    | last=-0.00253        | unit=-
 
-Cm              | n=1    | last=0.0822          | unit=-
-CDi             | n=1    | last=0.00384         | unit=-
-e               | n=1    | last=0.7565          | unit=-
-Cn'             | n=1    | last=-0.00226        | unit=-
+Cm              | n=3    | last=0.0822          | unit=-
+CDi             | n=3    | last=0.00384         | unit=-
+e               | n=3    | last=0.7565          | unit=-
+Cn'             | n=3    | last=-0.00226        | unit=-
 
-IsConverged     | n=1    | last=1               | unit=-
-Op.Point        | n=1    | last=10              | unit=-
-altitude        | n=1    | last=0               | unit=Kft
-F1              | n=1    | last=0.01513         | unit=-
+IsConverged     | n=3    | last=1               | unit=-
+Op.Point        | n=3    | last=10              | unit=-
+altitude        | n=3    | last=0               | unit=Kft
+F1              | n=3    | last=0.01513         | unit=-
 
-F2              | n=1    | last=-15.34          | unit=-
-F3              | n=1    | last=3.975           | unit=-
-F4              | n=1    | last=-0.4233         | unit=-
-E1              | n=1    | last=9.5             | unit=-
+F2              | n=3    | last=-15.34          | unit=-
+F3              | n=3    | last=3.975           | unit=-
+F4              | n=3    | last=-0.4233         | unit=-
+E1              | n=3    | last=9.5             | unit=-
 
-E2              | n=1    | last=10.5            | unit=-
+E2              | n=3    | last=10.5            | unit=-
 
 Convergence history:
-[True]
+[True, True, True]
 
 ======================================================================
 
@@ -92,8 +92,8 @@ ASWING PARSER SUMMARY
 ======================================================================
 
 Model Name      : Light Hawk
-States length   : 2255
-States preview  : [ 3.34358603e-01 -2.46040516e+01  7.21094370e-01 -1.71271544e-02
+ModelStates length   : 2255
+ModelStates preview  : [ 3.34358603e-01 -2.46040516e+01  7.21094370e-01 -1.71271544e-02
  -1.82638108e-03] ... [0. 0. 0. 0. 0.]
 
 Model Variables:
