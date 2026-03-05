@@ -1,3 +1,4 @@
+
 ======================================================================
 ASWING PARSER SUMMARY
 ======================================================================
@@ -10,12 +11,12 @@ States preview  : [ 7.10374909e-03 -1.53360357e+01  3.97384977e+00 -4.23270404e-
 Model Variables:
 ----------------------------------------------------------------------
 Time            | n=1    | last=0.09            | unit=s
-earthX          | n=1    | last=-2.70201        | unit=m
-earthY          | n=1    | last=0.00035593      | unit=m
-earthZ          | n=1    | last=0.000206852     | unit=m
+earth X         | n=1    | last=-2.70201        | unit=m
+earth Y         | n=1    | last=0.00035593      | unit=m
+earth Z         | n=1    | last=0.000206852     | unit=m
 
 Heading         | n=1    | last=-0.0257948      | unit=deg
-Pitch           | n=1    | last=5.43686         | unit=deg
+Elev.           | n=1    | last=5.43686         | unit=deg
 Bank            | n=1    | last=0.0509945       | unit=deg
 Alpha           | n=1    | last=5.42449         | unit=deg
 
@@ -69,17 +70,17 @@ CDi             | n=1    | last=0.00384         | unit=-
 e               | n=1    | last=0.7565          | unit=-
 Cn'             | n=1    | last=-0.00226        | unit=-
 
-Flap 1          | n=1    | last=0.01513         | unit=-
-F2              | n=1    | last=-15.34          | unit=-
-Flap 3          | n=1    | last=3.975           | unit=-
-Flap 4          | n=1    | last=-0.4233         | unit=-
-
-Peng 1          | n=1    | last=9.5             | unit=dVeng
-Peng 2          | n=1    | last=10.5            | unit=dVeng
 IsConverged     | n=1    | last=1               | unit=-
 Op.Point        | n=1    | last=10              | unit=-
-
 altitude        | n=1    | last=0               | unit=Kft
+F1              | n=1    | last=0.01513         | unit=-
+
+F2              | n=1    | last=-15.34          | unit=-
+F3              | n=1    | last=3.975           | unit=-
+F4              | n=1    | last=-0.4233         | unit=-
+E1              | n=1    | last=9.5             | unit=-
+
+E2              | n=1    | last=10.5            | unit=-
 
 Convergence history:
 [True]
@@ -98,12 +99,12 @@ States preview  : [ 3.34358603e-01 -2.46040516e+01  7.21094370e-01 -1.71271544e-
 Model Variables:
 ----------------------------------------------------------------------
 Time            | n=0    | last=None            | unit=-
-earthX          | n=1    | last=0               | unit=ft
-earthY          | n=1    | last=0               | unit=ft
-earthZ          | n=1    | last=0               | unit=ft
+earth X         | n=1    | last=0               | unit=ft
+earth Y         | n=1    | last=0               | unit=ft
+earth Z         | n=1    | last=0               | unit=ft
 
 Heading         | n=1    | last=0               | unit=deg
-Pitch           | n=1    | last=0               | unit=deg
+Elev.           | n=1    | last=0               | unit=deg
 Bank            | n=1    | last=0               | unit=deg
 Alpha           | n=1    | last=-0              | unit=deg
 
@@ -157,17 +158,17 @@ CDi             | n=1    | last=0.00381         | unit=-
 e               | n=1    | last=0.8425          | unit=-
 Cn'             | n=1    | last=0               | unit=-
 
-Flap 1          | n=1    | last=0               | unit=-
-F2              | n=1    | last=0               | unit=-
-Flap 3          | n=1    | last=0               | unit=-
-Flap 4          | n=1    | last=0               | unit=-
-
-Peng 1          | n=0    | last=None            | unit=-
-Peng 2          | n=0    | last=None            | unit=-
 IsConverged     | n=1    | last=1               | unit=-
 Op.Point        | n=1    | last=1               | unit=-
-
 altitude        | n=1    | last=0               | unit=Kft
+F1              | n=1    | last=0               | unit=-
+
+F2              | n=1    | last=0               | unit=-
+F3              | n=1    | last=0               | unit=-
+F4              | n=1    | last=0               | unit=-
+E1              | n=0    | last=None            | unit=-
+
+E2              | n=0    | last=None            | unit=-
 
 Convergence history:
 [True]

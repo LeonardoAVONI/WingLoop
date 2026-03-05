@@ -18,61 +18,175 @@ Sometimes, if the "input" files for WingLoop are badly written, they are not rec
 ====================================================================================
 """
 
-import re
-import time
 import numpy as np
-import os
-import mmap
-import warnings
-from itertools import islice
-import sys
+import re
 
 
-def extract_value(label, text):
+def initialize_data_dict(requested, rename_map=None, latex=None):
+    if rename_map is None:
+        rename_map = {}
+    if latex is None:
+        latex = {}
+    units = {}
+
+    data = {
+        "ModelName": None,
+        "States": None,
+        "ModelVariables": {}
+    }
+
+    # Use the final (clean) internal name as dict key for consistency with units/latex
+    for raw_var in requested:
+        internal_var = rename_map.get(raw_var, raw_var)
+        data["ModelVariables"][internal_var] = {
+            "values": [],
+            "unit": units.get(internal_var) or units.get(raw_var),
+            "latex": latex.get(internal_var) or latex.get(raw_var)
+        }
+
+    return data
+
+def initialize_control_dict(control_elements, default_value=0.0):
     """
-    Function that extracts the numbers that come after the specified labels, from a certain text i.e. multiline string
+    Creates a control dictionary with all requested control elements set to a default value.
+    
+    Example:
+        control = initialize_control_dict(["F1", "F2", "F3", "F4", "E1", "E2"])
+        # → {'F1': 0.0, 'F2': 0.0, 'F3': 0.0, 'F4': 0.0, 'E1': 0.0, 'E2': 0.0}
     """
-    
-    # Pattern to find the value after the label, allowing for spaces and units
-    pattern = rf"{label}\s*:\s*([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)"
-    match = re.search(pattern, text)
-    if match:
-        return match.group(1)
-    else:
-        return None
-    
-    
+    return {elem: default_value for elem in control_elements}
 
-def extract_states_vector(file_path):
-    with open(file_path, 'r') as file:
-        lines = file.readlines()
+def read_aswing_file(filepath, data_dict, rename_map=None):
+    if rename_map is None:
+        rename_map = {}
 
-    # Flag to track if we're inside the block
-    # used for the AIAA Aviation paper, Murua et al....
-    recording = False
-    values = []
+    # ------------------------------------------------------------------
+    # Collect ALL raw names exactly as they appear in the file
+    # ------------------------------------------------------------------
+    raw_names = list(rename_map.keys())
+    for internal in list(data_dict["ModelVariables"].keys()):
+        if internal not in rename_map.values():
+            raw_names.append(internal)
+
+    all_raw = set(raw_names)
+    sorted_raw = sorted(all_raw, key=len, reverse=True)
+    name_alt = '|'.join(re.escape(name) for name in sorted_raw)
+
+    first_words = {name.split()[0] for name in all_raw if name}
+    sorted_first = sorted(first_words, key=len, reverse=True)
+    first_alt = '|'.join(re.escape(w) for w in sorted_first)
+
+    # ------------------------------------------------------------------
+    # Final ultra-robust pattern
+    # ------------------------------------------------------------------
+    pattern = re.compile(rf"""
+        (?<![A-Za-z0-9])                # word boundary
+        ({name_alt})                    # exact raw variable
+        \s*:\s*
+        ([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)   # value
+        (?:\s+                          # optional unit
+            (?! (?:{first_alt})(?=[\s:]|$))   # NOT start of any known variable
+            ([^\s:]+)                   # the unit token
+            (?= \s (?! :) | $ )         # followed by space-not-colon OR end-of-line
+        )?
+    """, re.VERBOSE)
+
+    with open(filepath, "r") as f:
+        lines = f.readlines()
+
+    data_dict["ModelName"] = lines[2].strip()
+
+    recording_states = False
+    states = []
+    converged = False
 
     for line in lines:
-        line = line.strip()
+        stripped = line.strip()
 
-        if 'STARTEDPRINTINGSTATES' in line:
-            recording = True
-            continue  # skip the marker line
+        if "Status:" in stripped:
+            converged = "Converged" in stripped
 
-        if 'ENDEDPRINTINGSTATES' in line:
-            break  # end recording
-
-        if recording:
+        if "STARTEDPRINTINGSTATES" in stripped:
+            recording_states = True
+            states = []
+            continue
+        if "ENDEDPRINTINGSTATES" in stripped:
+            recording_states = False
+            data_dict["States"] = np.array(states)
+            continue
+        if recording_states:
             try:
-                # Each line can have one or more float values
-                values.extend(map(float, line.split()))
-            except ValueError:
-                # Skip lines with non-numeric content just in case
-                continue
+                states.extend(map(float, stripped.split()))
+            except:
+                pass
+            continue
 
-    x = np.array(values)
-    x[-12]=0
-    return x
+        # Extract variables
+        for match in pattern.finditer(line):
+            var_name = match.group(1).strip()
+            value = float(match.group(2))
+            unit_candidate = match.group(3)
+
+            internal_name = rename_map.get(var_name, var_name)
+
+            if internal_name in data_dict["ModelVariables"]:
+                data_dict["ModelVariables"][internal_name]["values"].append(value)
+
+                if (data_dict["ModelVariables"][internal_name]["unit"] is None and
+                        unit_candidate is not None):
+                    data_dict["ModelVariables"][internal_name]["unit"] = unit_candidate
+
+    if "IsConverged" in data_dict["ModelVariables"]:
+        data_dict["ModelVariables"]["IsConverged"]["values"].append(converged)
+
+    return data_dict
+
+def print_aswing_summary(data_dict, max_vars_per_line=4):
+    print("\n" + "="*70)
+    print("ASWING PARSER SUMMARY")
+    print("="*70)
+
+    print(f"\nModel Name      : {data_dict.get('ModelName')}")
+
+    states = data_dict.get("States")
+    if states is not None:
+        print(f"States length   : {len(states)}")
+        print(f"States preview  : {states[:5]} ... {states[-5:]}")
+    else:
+        print("States          : None")
+
+    print("\nModel Variables:")
+    print("-"*70)
+
+    counter = 0
+    for name, content in data_dict["ModelVariables"].items():
+        values = content["values"]
+        unit = content["unit"]
+
+        nvals = len(values)
+        last_val = values[-1] if nvals > 0 else None
+
+        if isinstance(last_val, (int, float)):
+            last_str = f"{last_val:.6g}"
+        else:
+            last_str = str(last_val)
+
+        unit_str = unit if unit is not None else "-"
+
+        print(f"{name:<15} | n={nvals:<4} | last={last_str:<15} | unit={unit_str}")
+
+        counter += 1
+        if counter % max_vars_per_line == 0:
+            print()
+
+    if "IsConverged" in data_dict["ModelVariables"]:
+        conv = data_dict["ModelVariables"]["IsConverged"]["values"]
+        print("\nConvergence history:")
+        print(conv)
+
+    print("\n" + "="*70)
+
+
 
 def seconds2hms(seconds):
     """
@@ -83,130 +197,6 @@ def seconds2hms(seconds):
     remaining_seconds = np.round(seconds % 60)
     return hours, minutes, remaining_seconds
 
-def safe_read_and_extract(name, fields, retries=3, delay=0.01):
-    file_read_correctly = False
-    for attempt in range(retries):
-        with open(name, "r") as document:
-            text = document.read()
-        extracted_values = {field: extract_value(field, text) for field in fields}
-        
-        # Check if extracted values are all None
-        if all(value is not None for value in extracted_values.values()):
-            file_read_correctly = True
-            break
-        else:
-            print(f"Attempt {attempt+1}/{retries} failed")
-            time.sleep(delay)  # Wait before retrying
-            
-    # Finish
-    if file_read_correctly:
-        # no problems, we can return the content
-        return extracted_values
-    else:
-        print("Failed to read valid values after retries.")
-        print("INEXISTENT ASWING DATA, problems during file reading, check the file written by ASWING")
-        sys.exit()
-
-
-def text2python_main(name):
-    """
-    opens a text document called "name", then extracts from it all the values written in "fields" from such document
-    (we assume the document to be created from OPER)
-    then, the values are extracted and stored in a dictionary called "extracted_values"
-    """
-    #with open(name, "r") as document:
-    #    text = document.read()
-    #print(text)
-
-    # List of fields to extract
-    fields = ['Time','earth X','earth Y','earth Z','Heading', 'Elev.', 'Bank','Alpha','Beta','Velocity','Flap 2']
-    
-    # Extract the values for each field
-    #extracted_values = {field: extract_value(field, text) for field in fields}
-    
-    extracted_values = safe_read_and_extract(name, fields)
-
-    # Rename keys using a mapping
-    key_mapping = {
-        'earth X': 'earthX',
-        'earth Y': 'earthY',
-        'earth Z': 'earthZ',
-        'Elev.': 'Pitch',
-        'Flap 2': 'F2',
-    }
-
-    # Update the dictionary with the new key names
-    for old_key, new_key in key_mapping.items():
-        if old_key in extracted_values:
-            extracted_values[new_key] = extracted_values.pop(old_key)
-
-    extracted_values=convert_extracted_values(extracted_values)
-
-    return extracted_values
-
-def text2python_withderivative(name):
-    """
-    opens a text document called "name", then extracts from it all the values written in "fields" from such document
-    (we assume the document to be created from OPER)
-    then, the values are extracted and stored in a dictionary called "extracted_values"
-    """
-    #with open(name, "r") as document: 
-    #    text = document.read() 
-    #print(text)
-
-    # List of fields to extract
-    fields = ['Time','earth X','earth Y','earth Z','Heading', 'Elev.', 'Bank','Alpha','Beta','Velocity','Flap 2','Wx','Wy','Wz','Wdotx','Wdoty','Wdotz']
-
-    # Extract the values for each field
-    #extracted_values = {field: extract_value(field, text) for field in fields} #here None is already there everywhere 
-
-    extracted_values = safe_read_and_extract(name, fields)
-
-    # Rename keys using a mapping
-    key_mapping = {
-        'earth X': 'earthX',
-        'earth Y': 'earthY',
-        'earth Z': 'earthZ',
-        'Elev.': 'Pitch',
-        'Flap 2': 'F2',
-    }
-
-    # Update the dictionary with the new key names
-    for old_key, new_key in key_mapping.items():
-        if old_key in extracted_values:
-            extracted_values[new_key] = extracted_values.pop(old_key)
-
-    extracted_values=convert_extracted_values(extracted_values)
-
-
-    data = []
-    with open(name, "r") as f:
-        lines = f.readlines()
-        for line in lines:
-            try:
-                # only take the values from the first column concerning the Wing
-                if "Surface  Beam  2" in line: 
-                    break
-                # Split the line into columns
-                values = line.split()
-                if len(values) == 2:  # Data rows have 2 columns
-                    data.append([float(v) for v in values])
-            except ValueError:
-                continue  # Skip any lines that can't be converted to floats
-
-
-    # Convert data to a NumPy array for easier manipulation
-    #data = np.array(data)
-    
-    #LEN=len(data)
-    
-    #t = data[:, 0]  # t/10 column
-    #M_c = 1000*0.5*(data[int(LEN/2), 1]+data[int(LEN/2-1), 1]) # compute the average WRBM using Mc
-
-    #extracted_values["WRBM"] = M_c
-
-    return extracted_values
-
 def scientific_to_decimal(sci_str):
     """ 
     Convert the scientific notation string to a regular float and format it as a string
@@ -216,162 +206,129 @@ def scientific_to_decimal(sci_str):
     num = float(sci_str)
     return f"{num:.10f}".rstrip("0").rstrip(".")
 
-def convert_extracted_values(extracted_values):
-    """
-    Takes the input "extracted values" dictionary, and for each value inside it does the following
-        -converts it to non-scientific notation data (in case it needs to be used by matlab later)
-        -in case some variables take value None, then it usually means that the iterations in ASWING 
-        did not provid meaningful results, thus leading to non-computable data. In that case, a warning 
-        is printed and an artificial value of 1E10 is used instead
-    """
-    # Iterate over each key-value pair in extracted_values
-    for key, value in extracted_values.items():
-        # Check if the item contains scientific notation, and convert if necessary
-        if isinstance(value, list):  # Check for list values (multiple items)
-            extracted_values[key] = [scientific_to_decimal(str(val)) if 'E' in str(val) else val for val in value]
-        elif 'E' in str(value):  # Single value, convert if scientific notation is found
-            extracted_values[key] = scientific_to_decimal(str(value))
-        
-        if extracted_values[key] is None:
-            warnings.warn('INEXISTENT ASWING DATA, problems during file conversion, check the file written by ASWING')
-            #extracted_values[key] = 10000000000
-        else:
-            extracted_values[key] = float(extracted_values[key]) #convert to float
-    return extracted_values
 
 
 def python2text(filename, control):
-    """ 
-    Writes the informations for the flaps and engine to use
-    In this case, it writes F1, F2, F3, F4 and E1
-    It should be possible to make this function generalizable and 
-    just create the file depending on the entries on the "control" dictionary
-    
-    Also, when writing the document, it is important to write it correctly, else 
-    it will not be red properly by ASWING
     """
-
-    Flap1 = str(control["F1"])
-    Flap2 = str(control["F2"])
-    Flap3 = str(control["F3"])
-    Flap4 = str(control["F4"])
-    Engine1 = str(control["E1"])
-    Engine2 = str(control["E2"])
+    Writes a simple ASWING time-history control file using the provided control dictionary.
     
-
-    # Build the content in a single string
-    content = (
-        " time  F1  F2  F3  F4  E1  E2\n"
-        f" 0.0\t{Flap1}\t{Flap2}\t{Flap3}\t{Flap4}\t{Engine1}\t{Engine2}\n"
-        f" 1000.0\t{Flap1}\t{Flap2}\t{Flap3}\t{Flap4}\t{Engine1}\t{Engine2}"
-    )
-
-    # Write the content to the file at once
-    with open(filename, "w") as file:
-        file.write(content)
+    Parameters:
+        filename : str, path to the output control file (e.g. "controls.dat")
+        control  : dict, must contain all required control keys ("F1", "F2", "E1", etc.)
+                   Keys determine both the column order and the values.
     
-    # possible check to see if the file has finished writing, but we noticed the file
-    # is written in one single time, so its not really useful
+    Raises:
+        KeyError if any expected control is missing (but since we assume the dict is complete,
+        this is considered a programming error upstream).
+    """
+    # The column order = insertion order of keys in the dict (Python 3.7+)
+    control_elements = list(control.keys())
+    
+    header = " time " + " ".join(control_elements)+" "+ "\n"
+    
+    # Convert values to strings
+    values = [str(value) for value in control.values()]
+    
+    line1 = " 0.0\t" + "\t".join(values) + "\n"
+    line2 = " 1000.0\t" + "\t".join(values)
+    
+    content = header + line1 + line2
+    
+    with open(filename, "w") as f:
+        f.write(content)
 
 if __name__=="__main__":
-    """
-    for i in range(1000000):
-        print("Iteration ", i)
-        instantaneous_flight_data = text2python_withderivative("output_6_1999_crash")
-        print(instantaneous_flight_data)
-    """
-    entries = ['Time','earth X','earth Y','earth Z','Heading', 'Elev.', 'Bank','Alpha','Beta','Velocity','Flap 2','Wy']
-    test = safe_read_and_extract("testfiles/ASWING_test_output",entries)
-    print(test)
+    requested = [
 
-"""
+        # Position & Attitude
+        "Time","earth X","earth Y","earth Z",
+        "Heading","Elev.","Bank",
+        "Alpha","Beta","Velocity",
 
-def python2text_old(filename, Flap1, Flap2, Flap3, Flap4,):
-    # Build the content in a single string, old, deprecated version
-    content = (
-        "time\tF1\tF2\tF3\tF4\n"
-        "#\n"
-        "*1.\t1.\t1.\t1.\t1.\n"
-        "+0.\t0.\t0.\t0.\t0.\n"
-        "#\n"
-        f"0.0\t{Flap1}\t{Flap2}\t{Flap3}\t{Flap4}\n"
-        f"1000.0\t{Flap1}\t{Flap2}\t{Flap3}\t{Flap4}\n"
-    )
+        # Angular velocities / accelerations
+        "Wx","Wy","Wz",
+        "Wdotx","Wdoty","Wdotz",
 
-    # Write the content to the file at once
-    with open(filename, "w") as file:
-        file.write(content) #maybe use file.writelines(content)
+        # Linear velocities / accelerations
+        "Ux","Uy","Uz",
+        "Udotx","Udoty","Udotz",
 
-def text2python_fromdoc(text):
-    # List of fields to extract
-    fields = ['Time','Heading', 'Elev.', 'Bank' , 'Velocity', 'Lift', 'Weight', 'Mach', 'CL', 'CD']
+        # Moments
+        "sum Mx","sum My","sum Mz",
 
-    # Extract the values for each field
-    extracted_values = {field: extract_value(field, text) for field in fields}
-    #print(extracted_values)
+        # Forces
+        "sum Fx","sum Fy","sum Fz",
 
-    extracted_values=convert_extracted_values(extracted_values)
+        # Aero & reference quantities
+        "Lift","Density","Ref.Area",
+        "Weight","Dyn.Pr.","Ref.Span",
+        "Load Fac","VIAS","Ref.Chrd",
+        "Mach","VTAS","MachPG",
 
-    #print(extracted_values["Time"])
+        # Aero coefficients
+        "CL","CD","L/D","Cl'",
+        "Cm","CDi","e","Cn'",
 
-    return extracted_values["Elev."], extracted_values["Bank"], extracted_values["Heading"]
+        # Convergence (we will treat specially)
+        "IsConverged",
+        
+        "Op.Point",
+        "altitude"
+    ]
 
 
-def text2python_mmap(name):
-    # Sample input document as a multiline string
 
-    with open(name, "r") as document:
-        with mmap.mmap(document.fileno(), 0, access=mmap.ACCESS_READ) as mmapped_file:
-            text = mmapped_file.read().decode('utf-8')
+    rename_map = {
+#        "earth X": "earthX",
+#        "earth Y": "earthY",
+#        "earth Z": "earthZ",
+#        "Elev.": "Pitch"
+    }
 
-    # List of fields to extract
-    fields = ['Heading', 'Elev.', 'Bank' , 'Velocity', 'Lift', 'Weight', 'Mach', 'CL', 'CD']
+    latex = {
+        "Time": r"$t$",
+        "earthX": r"$X_E$",
+        "Velocity": r"$V$"
+    }
 
-    # Extract the values for each field
-    extracted_values = {field: extract_value(field, text) for field in fields}
+    adimensional_vars = {
+        "CL", "CD", "Cm", "Cn'",
+        "Mach", "MachPG", "Load Fac","e"
+    }
 
-    extracted_values=convert_extracted_values(extracted_values)
+    control_elements = ["F1", "F2", "F3", "F4", "E1", "E2"]
 
-    return extracted_values["Elev."], extracted_values["Bank"], extracted_values["Heading"]
+    for ctrl in control_elements:
+        if ctrl.startswith("F"):
+            num = ctrl[1:]
+            raw = f"Flap {num}"
+        elif ctrl.startswith("E"):
+            num = ctrl[1:]
+            raw = f"Peng {num}"
+        else:
+            raise ValueError(f"Unknown control prefix in {ctrl}")
+        requested.append(raw)
+        rename_map[raw] = ctrl
+        adimensional_vars.add(ctrl)
 
-def text2python_lines(name,N=31):
-    # Sample input document as a multiline string
+    data_metric = initialize_data_dict(requested, rename_map, latex)   # ← added rename_map here
 
-    with open(name, "r") as document:
-        text = ''.join(islice(document, N))
+    for i in range(3):
+        data_metric = read_aswing_file("testfiles/ASWING_test_output_metric", data_metric, rename_map)
 
-    # List of fields to extract
-    fields = ['Heading', 'Elev.', 'Bank' , 'Velocity', 'Lift', 'Weight', 'Mach', 'CL', 'CD']
+    data_imperial = initialize_data_dict(requested, rename_map, latex)   # ← added rename_map here
+    data_imperial = read_aswing_file("testfiles/ASWING_test_output_imperial", data_imperial, rename_map)
+    print_aswing_summary(data_imperial)
+        
+    # Example 1: All controls provided
+    control = {
+        "F1": 0.00710374909,
+        "F2": -15.3360357,
+        "F3": 3.97384977,
+        "F4": -0.423270404,
+        "E1": 9.5,
+        "E2": 10.5
+    }
 
-    # Extract the values for each field
-    extracted_values = {field: extract_value(field, text) for field in fields}
-
-    extracted_values=convert_extracted_values(extracted_values)
-
-    return extracted_values["Elev."], extracted_values["Bank"], extracted_values["Heading"]
-
-def text2python_mmap_Nlines(name,N=31):
-    # Sample input document as a multiline string
-
-    text = []
-    with open(name, "r") as document:
-        with mmap.mmap(document.fileno(), 0, access=mmap.ACCESS_READ) as mmapped_file:
-            start = 0
-            for _ in range(N):
-                end = mmapped_file.find(b'\n', start)
-                if end == -1:
-                    # End of file reached before N lines
-                    break
-                text.append(mmapped_file[start:end + 1].decode('utf-8'))
-                start = end + 1
-
-    # List of fields to extract
-    fields = ['Heading', 'Elev.', 'Bank' , 'Velocity', 'Lift', 'Weight', 'Mach', 'CL', 'CD']
-
-    # Extract the values for each field
-    extracted_values = {field: extract_value(field, text) for field in fields}
-
-    extracted_values=convert_extracted_values(extracted_values)
-
-    return extracted_values["Elev."], extracted_values["Bank"], extracted_values["Heading"]
-"""
+    python2text("controls", control)
+    # → writes file with columns: time F1 F2 F3 E1 E2
