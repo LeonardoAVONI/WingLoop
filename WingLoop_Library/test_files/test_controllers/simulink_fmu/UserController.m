@@ -29,7 +29,10 @@ classdef UserController < handle
             fprintf('[MATLAB UserController] Initialized\n');
             fprintf('   scalar  = %.4f\n', obj.workspace_scalar);
             fprintf('   string  = %s\n',   obj.workspace_string);
-            fprintf('   matrix size = %d × %d\n', size(obj.workspace_matrix));
+
+            fprintf('   matrix size = %d x %d\n', size(obj.workspace_matrix));
+            fprintf('   matrix =\n');
+            disp(obj.workspace_matrix);
         end
 
 
@@ -58,26 +61,5 @@ classdef UserController < handle
             obj.workspace_matrix = obj.workspace_scalar * eye(5);
         end
 
-
-        function output = step(obj, instantaneous_state, Dt)
-            % Controller step logic
-            % instantaneous_state is a column vector (double array)
-
-            fprintf('[MATLAB step] Using scalar = %.4f\n', obj.workspace_scalar);
-
-            % Example: very simple passthrough + tiny bias from property
-            bias = obj.workspace_scalar / 1e6;
-
-            testvalue = instantaneous_state(1:6);
-
-            output = struct(...
-                'F1', testvalue(1) + bias, ...
-                'F2', testvalue(2), ...
-                'F3', testvalue(3), ...
-                'F4', testvalue(4), ...
-                'E1', testvalue(5), ...
-                'E2', testvalue(6) ...
-            );
-        end
     end
 end

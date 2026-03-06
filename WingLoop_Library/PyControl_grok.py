@@ -189,20 +189,19 @@ class PyControl:
             # Instantiate MATLAB UserController class — it handles precomputed or default compute
             precomp_path_mat = self.precomputed_path or ""
             self.matlab_controller_instance = self.eng.UserController(precomp_path_mat)
-            # For simulink and simulink_fmu, set variables to workspace or parameters
-            if self.method == "simulink":
-                # Call a method to set to base workspace (add this method to UserController.m)
-                self.eng.feval('setToBaseWorkspace', self.matlab_controller_instance)
-            elif self.method == "simulink_fmu":
-                # Get data from MATLAB class and set on FMU
-                data_ml = self.eng.feval('getInitialData', self.matlab_controller_instance, nargout=1)
-                # Assume data_ml is matlab.struct — convert to Python dict and set on FMU
-                data = dict(data_ml)
-                param_vrs = {v.name: v.valueReference for v in self.fmu_controller.model_description.modelVariables if v.causality == 'parameter'}
-                for key, value in data.items():
-                    if key in param_vrs:
-                        # Flatten if array
-                        self.fmu_controller.fmu.setReal([param_vrs[key]], np.array(value).flatten().tolist())
+            # For simulink, set to base workspace
+            #if self.method == "simulink":
+            #    self.eng.feval('setToBaseWorkspace', self.matlab_controller_instance)
+            ## For fmu, get data and set on FMU
+            #elif self.method == "simulink_fmu":
+            #    #data_ml = self.eng.feval('getInitialData', self.matlab_controller_instance, nargout=1)
+            #    data_ml = self.eng.UserController(precomp_path_mat)
+            #    # Convert matlab.struct to Python dict
+            #    data = {k: np.array(v) for k, v in data_ml.items()}
+            #    param_vrs = {v.name: v.valueReference for v in self.fmu_controller.model_description.modelVariables if v.causality == 'parameter'}
+            #    for key, value in data.items():
+            #        if key in param_vrs:
+            #            self.fmu_controller.fmu.setReal([param_vrs[key]], value.flatten().tolist())
 
     def PyControl_DoControllerStep(self, instantaneous_state, Dt):
         if self.method=="matlab":
@@ -359,8 +358,8 @@ class SimulinkFMUController:
 
 if __name__=="__main__":
 
-    method = "python"
-    IsPrecomputed = True
+    method = "simulink_fmu"
+    IsPrecomputed = False
 
     # test_instantaneous_state is [10,11,12,13,...,19440,19450]
     # test_instantaneous_state has shape (1945,)

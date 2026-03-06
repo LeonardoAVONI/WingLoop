@@ -20,7 +20,7 @@ Sometimes, if the "input" files for WingLoop are badly written, they are not rec
 
 import numpy as np
 import re
-
+import pprint
 
 def initialize_data_dict(requested, rename_map=None, latex=None):
     if rename_map is None:
@@ -326,11 +326,13 @@ if __name__=="__main__":
     data_metric = initialize_data_dict(requested, rename_map, latex)   # ← added rename_map here
 
     for i in range(3):
-        data_metric = read_aswing_file("testfiles/ASWING_test_output_metric", data_metric, rename_map,RecordStateHistory=True)
+        data_metric = read_aswing_file("test_files/test_output/ASWING_test_output_metric", data_metric, rename_map,RecordStateHistory=True)
     print_aswing_summary(data_metric)
+    
+
 
     data_imperial = initialize_data_dict(requested, rename_map, latex)   # ← added rename_map here
-    data_imperial = read_aswing_file("testfiles/ASWING_test_output_imperial", data_imperial, rename_map)
+    data_imperial = read_aswing_file("test_files/test_output/ASWING_test_output_imperial", data_imperial, rename_map)
     print_aswing_summary(data_imperial)
         
     # Example 1: All controls provided
@@ -345,3 +347,23 @@ if __name__=="__main__":
 
     python2text("controls", control)
     # → writes file with columns: time F1 F2 F3 E1 E2
+    
+    
+    #pprint.pprint(data_metric)
+    """  
+
+    {'ModelName': 'Flexible HALE 3, Murua et al. 2012',
+    'ModelStates': [array([ 7.10374909e-03, -1.53360357e+01,  3.97384977e+00, ...,
+        -4.23310101e-01,  9.50000000e+00,  1.05000000e+01]),
+                    array([ 7.10374909e-03, -1.53360357e+01,  3.97384977e+00, ...,
+        -4.23310101e-01,  9.50000000e+00,  1.05000000e+01]),
+                    array([ 7.10374909e-03, -1.53360357e+01,  3.97384977e+00, ...,
+        -4.23310101e-01,  9.50000000e+00,  1.05000000e+01])],
+    'ModelVariables': {'Alpha': {'latex': None,
+                                'unit': 'deg',
+                                'values': [5.424489498138428,
+                                            5.424489498138428,
+                                            5.424489498138428]},
+                        'Bank': {'latex': None,
+
+    """
