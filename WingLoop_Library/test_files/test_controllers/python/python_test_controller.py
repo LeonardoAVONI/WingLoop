@@ -43,7 +43,7 @@ class UserController:
         data = {}
         data["workspace_scalar_py"] = 1234.5678
         data['workspace_string_py'] = "test_matlab_workspace"
-        data['workspace_matrix_py'] = np.eye(5)
+        data['workspace_matrix_py'] = data["workspace_scalar_py"]*np.eye(5)
         
         self.workspace_scalar_py = data["workspace_scalar_py"]
         self.workspace_string_py = data['workspace_string_py']

@@ -62,29 +62,23 @@ class PyControl:
         self.Dt = Dt
 
         # Full startup paths (relative → absolute resolution)
-        if method != "python":
-            self.startup_path = os.path.join(self.control_directory, startup_file)
-            if not os.path.isfile(self.startup_path):
-                    raise FileNotFoundError(f"Startup file not found: {self.startup_path}")
-        else: 
-            self.startup_path = None
+        self.startup_path = os.path.join(self.control_directory, startup_file) if startup_file else None
+        if self.startup_path and not os.path.isfile(self.startup_path):
+            raise FileNotFoundError(f"Startup file not found: {self.startup_path}")
         self.control_path = os.path.join(self.control_directory, control_file)
 
-         # Full control paths (relative → absolute resolution)
+        # Full control paths (relative → absolute resolution)
         if not os.path.isfile(self.control_path):
             raise FileNotFoundError(f"Control file not found: {self.control_path}")
         
         # Full precomputed paths (relative → absolute resolution)
-        if precomputed_file is not None:
-            self.precomputed_path = os.path.join(self.control_directory, precomputed_file)
-            if not os.path.isfile(self.precomputed_path):
-                warnings.warn(
-                    f"Precomputed file specified but not found → will compute instead.\n"
-                    f"Missing: {self.precomputed_path}",
-                    UserWarning
-                )
-                self.precomputed_path = None
-        else:
+        self.precomputed_path = os.path.join(self.control_directory, precomputed_file) if precomputed_file else None
+        if self.precomputed_path and not os.path.isfile(self.precomputed_path):
+            warnings.warn(
+                f"Precomputed file specified but not found → will compute instead.\n"
+                f"Missing: {self.precomputed_path}",
+                UserWarning
+            )
             self.precomputed_path = None
 
         # Library / toolbox path (used for MATLAB addpath and FMU location)
@@ -122,9 +116,10 @@ class PyControl:
         self.time = 0.0
         self.fmu_controller = None
         self.python_controller_instance = None  # For python class instance
+        self.matlab_controller_instance = None  # For matlab class instance
 
-        # MATLAB engine setup
-        if self.method in ["matlab", "simulink"]:
+        # MATLAB engine setup for MATLAB-related methods
+        if self.method in ["matlab", "simulink", "simulink_fmu"]:
             self.eng = matlab.engine.start_matlab("-nodesktop -nosplash -nojvm")  # -nojvm often faster
 
             # 1. Change directory → most reliable
@@ -171,8 +166,6 @@ class PyControl:
         Handles step 1 (compute) or step 2 (load precomputed).
         Makes variables accessible for step 3 (simulation).
         """
-        use_precomputed = self.precomputed_path is not None
-
         if self.method == "python":
             sys.path.append(self.control_directory)
             control_mod_name = os.path.splitext(self.control_file)[0]
@@ -192,46 +185,29 @@ class PyControl:
                 precomputed_file_path = self.precomputed_path,  # full path or None
             )
 
-        else:
-            if use_precomputed:
-                full_precomputed = self.precomputed_path
-                # Load precomputed
-                if self.method in ["matlab", "simulink"]:
-                    self.eng.load(full_precomputed, nargout=0)
-
-                elif self.method == "simulink_fmu":
-                    # Load from .mat or .npz and set as FMU parameters
-                    if full_precomputed.endswith('.mat'):
-                        data = scipy.io.loadmat(full_precomputed)
-                    else:
-                        data = np.load(full_precomputed)
-                    param_vrs = {v.name: v.valueReference for v in self.fmu_controller.model_description.modelVariables if v.causality == 'parameter'}
-                    for key, value in data.items():
-                        if not key.startswith('__') and key in param_vrs:
-                            # Assume scalar/array; adjust for your FMU (e.g., flatten if matrix)
-                            self.fmu_controller.fmu.setReal([param_vrs[key]], value.flatten().tolist())
-
-            else:
-                # Compute using startup_file
-                if self.method == "simulink_fmu":
-                    sys.path.append(self.control_directory)
-                    startup_mod_name = os.path.splitext(self.startup_file)[0]
-                    startup_mod = import_module(startup_mod_name)
-                    data = startup_mod.compute_initial_data()  # Assume returns dict of params
-                    param_vrs = {v.name: v.valueReference for v in self.fmu_controller.model_description.modelVariables if v.causality == 'parameter'}
-                    for key, value in data.items():
-                        if key in param_vrs:
-                            self.fmu_controller.fmu.setReal([param_vrs[key]], value.flatten().tolist())
-
-                elif self.method in ["matlab", "simulink"]:
-                    self.eng.cd(self.control_directory, nargout=0)
-                    self.eng.run(os.path.splitext(self.startup_file)[0], nargout=0)  # Runs the .m script
-
+        elif self.method in ["matlab", "simulink", "simulink_fmu"]:
+            # Instantiate MATLAB UserController class — it handles precomputed or default compute
+            precomp_path_mat = self.precomputed_path or ""
+            self.matlab_controller_instance = self.eng.UserController(precomp_path_mat)
+            # For simulink and simulink_fmu, set variables to workspace or parameters
+            if self.method == "simulink":
+                # Call a method to set to base workspace (add this method to UserController.m)
+                self.eng.feval('setToBaseWorkspace', self.matlab_controller_instance)
+            elif self.method == "simulink_fmu":
+                # Get data from MATLAB class and set on FMU
+                data_ml = self.eng.feval('getInitialData', self.matlab_controller_instance, nargout=1)
+                # Assume data_ml is matlab.struct — convert to Python dict and set on FMU
+                data = dict(data_ml)
+                param_vrs = {v.name: v.valueReference for v in self.fmu_controller.model_description.modelVariables if v.causality == 'parameter'}
+                for key, value in data.items():
+                    if key in param_vrs:
+                        # Flatten if array
+                        self.fmu_controller.fmu.setReal([param_vrs[key]], np.array(value).flatten().tolist())
 
     def PyControl_DoControllerStep(self, instantaneous_state, Dt):
         if self.method=="matlab":
             state_ml = matlab.double(instantaneous_state.tolist())  # 1×N or Nx1
-            out_ml = self.eng.feval(self.control_function_or_model, state_ml, Dt, nargout=1)
+            out_ml = self.eng.feval('step', self.matlab_controller_instance, state_ml, Dt, nargout=1)
             # out_ml is Python dict because MATLAB struct → dict
             output= {
                 "F1": float(out_ml['F1']),
@@ -383,8 +359,8 @@ class SimulinkFMUController:
 
 if __name__=="__main__":
 
-    method = "matlab"
-    IsPrecomputed = False
+    method = "python"
+    IsPrecomputed = True
 
     # test_instantaneous_state is [10,11,12,13,...,19440,19450]
     # test_instantaneous_state has shape (1945,)
@@ -410,8 +386,8 @@ if __name__=="__main__":
     elif method == "matlab":
         ControlInstance = PyControl(
             control_directory="test_files/test_controllers/matlab/",
-            startup_file="matlab_simulink_test_startup.m",
-            control_file="matlab_test_controller.m",               # can be almost anything .m
+            startup_file=None,
+            control_file="UserController.m",               # can be almost anything .m
             precomputed_file=precomputed_filename,
             Dt=test_Dt
         )
@@ -419,7 +395,7 @@ if __name__=="__main__":
 
         ControlInstance = PyControl(
             control_directory="test_files/test_controllers/simulink/",
-            startup_file="matlab_simulink_test_startup.m",
+            startup_file=None,
             control_file="simulink_test_controller.slx",    # ← determines simulink method
             precomputed_file=precomputed_filename,   # optional
             Dt=test_Dt
@@ -429,7 +405,7 @@ if __name__=="__main__":
 
         ControlInstance = PyControl(
             control_directory="test_files/test_controllers/simulink_fmu/",
-            startup_file="python_simulinkfmu_test_startup.py",
+            startup_file=None,
             control_file="simulink_test_controller.fmu",    # ← determines simulink method
             precomputed_file=precomputed_filename,
             Dt=test_Dt
