@@ -11,6 +11,7 @@ Last modified: 29/05/2025
 ====================================================================================
 
 """
+
 import numpy as np
 import matplotlib.pyplot as plt
 import os
@@ -36,8 +37,8 @@ class PyControl:
         startup_file: str,
         control_file: str,
         precomputed_file: str | None = None,
-        save_precomputed_after_compute: bool = False,
         library_path: str | None = None,          # ← NEW: optional path to WingLoop_Library or similar
+        Dt: float = 0.01,
     ):
         """
         Args:
@@ -46,10 +47,9 @@ class PyControl:
             startup_file:           Name of startup script (e.g. 'startup.m', 'compute_gains.py')
             control_file:           Main controller file (determines method): .m / .py / .slx / .fmu
             precomputed_file:       Optional name of precomputed data file (relative to control_directory)
-            save_precomputed_after_compute:
-                                    If True and precomputed_file=None, auto-save after computation
             library_path:           Optional path to additional MATLAB/Python library folder
                                     (e.g. WingLoop_Library containing functions/FMUs)
+            Dt:                     Time step for controller
         """
         # Normalize and make control_directory absolute → safer
         self.control_directory = os.path.abspath(os.path.normpath(control_directory))
@@ -59,17 +59,22 @@ class PyControl:
         self.startup_file = startup_file
         self.control_file = control_file
         self.precomputed_file = precomputed_file
-        self.save_precomputed_after_compute = save_precomputed_after_compute
+        self.Dt = Dt
 
-        # Full paths (relative → absolute resolution)
-        self.startup_path = os.path.join(self.control_directory, startup_file)
+        # Full startup paths (relative → absolute resolution)
+        if method != "python":
+            self.startup_path = os.path.join(self.control_directory, startup_file)
+            if not os.path.isfile(self.startup_path):
+                    raise FileNotFoundError(f"Startup file not found: {self.startup_path}")
+        else: 
+            self.startup_path = None
         self.control_path = os.path.join(self.control_directory, control_file)
 
-        if not os.path.isfile(self.startup_path):
-            raise FileNotFoundError(f"Startup file not found: {self.startup_path}")
+         # Full control paths (relative → absolute resolution)
         if not os.path.isfile(self.control_path):
             raise FileNotFoundError(f"Control file not found: {self.control_path}")
-
+        
+        # Full precomputed paths (relative → absolute resolution)
         if precomputed_file is not None:
             self.precomputed_path = os.path.join(self.control_directory, precomputed_file)
             if not os.path.isfile(self.precomputed_path):
@@ -110,14 +115,16 @@ class PyControl:
             raise ValueError(f"Unsupported control_file extension: {ext} (file: {control_file})")
         self.method = method_map[ext]
 
+        # Store control function/model name for later use
+        self.control_function_or_model = os.path.splitext(control_file)[0]
+
         self.eng = None
-        self.Dt = 0.01
         self.time = 0.0
         self.fmu_controller = None
+        self.python_controller_instance = None  # For python class instance
 
         # MATLAB engine setup
         if self.method in ["matlab", "simulink"]:
-            import matlab.engine
             self.eng = matlab.engine.start_matlab("-nodesktop -nosplash -nojvm")  # -nojvm often faster
 
             # 1. Change directory → most reliable
@@ -126,21 +133,14 @@ class PyControl:
             # 2. Add library path (utilities, functions, etc.)
             self.eng.addpath(self.library_path, nargout=0)
 
-            # Optional: add genpath() if you have many subfolders
-            # self.eng.addpath(self.eng.genpath(self.library_path), nargout=0)
-            
-            
-        # Simulink model name (without .slx)
+        # Simulink model setup
         if self.method == "simulink":
-            print("fcwececec TEST")
-            model_name = os.path.splitext(control_file)[0]
-
             try:
-                self.eng.load_system(model_name, nargout=0)
-                self.eng.set_param(model_name, 'ReturnWorkspaceOutputs', 'on', nargout=0)
-                self.eng.set_param(model_name, 'SignalLogging', 'on', nargout=0)
+                self.eng.load_system(self.control_function_or_model, nargout=0)
+                self.eng.set_param(self.control_function_or_model, 'ReturnWorkspaceOutputs', 'on', nargout=0)
+                self.eng.set_param(self.control_function_or_model, 'SignalLogging', 'on', nargout=0)
             except Exception as e:
-                raise RuntimeError(f"Failed to load/configure Simulink model '{model_name}': {e}")
+                raise RuntimeError(f"Failed to load/configure Simulink model '{self.control_function_or_model}': {e}")
 
         # FMU setup
         elif self.method == "simulink_fmu":
@@ -158,13 +158,10 @@ class PyControl:
             if fmu_path is None:
                 raise FileNotFoundError(f"FMU not found. Tried:\n" + "\n".join(possible_fmu_locations))
 
-            #from .SimulinkFMUController import SimulinkFMUController  # adjust import as needed
             self.fmu_controller = SimulinkFMUController(
                 fmu_path=fmu_path,
                 Dt=self.Dt
             )
-            
-        self.x_state_trimmed = np.zeros(1945)
 
         # Run setup
         self.setup()
@@ -174,91 +171,74 @@ class PyControl:
         Handles step 1 (compute) or step 2 (load precomputed).
         Makes variables accessible for step 3 (simulation).
         """
-        full_startup = os.path.join(self.control_directory, self.startup_file)
-        use_precomputed = self.precomputed_file is not None
-        full_precomputed = os.path.join(self.control_directory, self.precomputed_file) if use_precomputed else None
+        use_precomputed = self.precomputed_path is not None
 
-        if use_precomputed and not os.path.exists(full_precomputed):
-            print(f"Precomputed file {full_precomputed} not found; falling back to computation.")
-            use_precomputed = False
+        if self.method == "python":
+            sys.path.append(self.control_directory)
+            control_mod_name = os.path.splitext(self.control_file)[0]
+            control_mod = import_module(control_mod_name)
 
-        if use_precomputed:
-            # Load precomputed
-            if self.method == "python":
-                data = np.load(full_precomputed)
-                self.K_x = data['K_x']
-                self.W_T_M = data['W_T_M']
-                #self.q_state_trimmed = data['q_state_trimmed']  # Or recompute if needed: self.W_T_M @ self.x_state_trimmed
+            # Convention: the class must be named UserController
+            # (you can make this configurable later if needed)
+            try:
+                UserControllerClass = getattr(control_mod, 'UserController')
+            except AttributeError:
+                raise AttributeError(
+                    f"Python control file '{self.control_file}' must define a class named 'UserController'"
+                )
 
-            elif self.method in ["matlab", "simulink"]:
-                self.eng.load(full_precomputed)
-
-            elif self.method == "simulink_fmu":
-                # Load from .mat or .npz and set as FMU parameters
-                if full_precomputed.endswith('.mat'):
-                    data = scipy.io.loadmat(full_precomputed)
-                else:
-                    data = np.load(full_precomputed)
-                param_vrs = {v.name: v.valueReference for v in self.fmu_controller.model_description.modelVariables if v.causality == 'parameter'}
-                for key, value in data.items():
-                    if not key.startswith('__') and key in param_vrs:
-                        # Assume scalar/array; adjust for your FMU (e.g., flatten if matrix)
-                        self.fmu_controller.fmu.setReal([param_vrs[key]], value.flatten().tolist())
+            # Instantiate — pass paths so the class decides what to do
+            self.python_controller_instance = UserControllerClass(
+                precomputed_file_path = self.precomputed_path,  # full path or None
+            )
 
         else:
-            # Compute using startup_file
-            if self.method == "python" or self.method == "simulink_fmu":  # Python-based computation
-                sys.path.append(self.control_directory)
-                startup_mod_name = os.path.splitext(self.startup_file)[0]
-                startup_mod = import_module(startup_mod_name)
-                data = startup_mod.compute_initial_data(self.x_state_trimmed)  # Assume this function exists in startup_file
-                self.K_x = data['K_x']
-                self.W_T_M = data['W_T_M']
-                #self.q_state_trimmed = data.get('q_state_trimmed', self.W_T_M @ self.x_state_trimmed)
+            if use_precomputed:
+                full_precomputed = self.precomputed_path
+                # Load precomputed
+                if self.method in ["matlab", "simulink"]:
+                    self.eng.load(full_precomputed, nargout=0)
 
-            elif self.method in ["matlab", "simulink"]:
-                self.eng.cd(self.control_directory)
-                # Pass trimmed state to workspace for computation
-                self.eng.workspace['x_state_trimmed'] = matlab.double(self.x_state_trimmed.tolist())
-                self.eng.run(os.path.splitext(self.startup_file)[0])  # Runs the .m script
+                elif self.method == "simulink_fmu":
+                    # Load from .mat or .npz and set as FMU parameters
+                    if full_precomputed.endswith('.mat'):
+                        data = scipy.io.loadmat(full_precomputed)
+                    else:
+                        data = np.load(full_precomputed)
+                    param_vrs = {v.name: v.valueReference for v in self.fmu_controller.model_description.modelVariables if v.causality == 'parameter'}
+                    for key, value in data.items():
+                        if not key.startswith('__') and key in param_vrs:
+                            # Assume scalar/array; adjust for your FMU (e.g., flatten if matrix)
+                            self.fmu_controller.fmu.setReal([param_vrs[key]], value.flatten().tolist())
 
-                # Fetch computed vars if needed (optional; they're in workspace for simulation)
-                # self.K_x = np.array(self.eng.workspace['K_x'])  # If you need them in Python
+            else:
+                # Compute using startup_file
+                if self.method == "simulink_fmu":
+                    sys.path.append(self.control_directory)
+                    startup_mod_name = os.path.splitext(self.startup_file)[0]
+                    startup_mod = import_module(startup_mod_name)
+                    data = startup_mod.compute_initial_data()  # Assume returns dict of params
+                    param_vrs = {v.name: v.valueReference for v in self.fmu_controller.model_description.modelVariables if v.causality == 'parameter'}
+                    for key, value in data.items():
+                        if key in param_vrs:
+                            self.fmu_controller.fmu.setReal([param_vrs[key]], value.flatten().tolist())
 
-            if self.save_precomputed_after_compute:
-                # Save computed data for future use (default filename based on method)
-                save_path = os.path.join(self.control_directory, f"precomputed_{self.method}.{'npz' if self.method in ['python', 'simulink_fmu'] else 'mat'}")
-                if self.method == "python" or self.method == "simulink_fmu":
-                    np.savez(save_path, K_x=self.K_x, W_T_M=self.W_T_M)#, q_state_trimmed=self.q_state_trimmed)
                 elif self.method in ["matlab", "simulink"]:
-                    self.eng.save(save_path)
+                    self.eng.cd(self.control_directory, nargout=0)
+                    self.eng.run(os.path.splitext(self.startup_file)[0], nargout=0)  # Runs the .m script
 
-    # Your existing UAV_control_Strategy_LQR and UAV_control_Strategy methods go here (unchanged)
-    # They will use the setup variables appropriately (e.g., self.K_x for python, workspace for matlab/simulink)
 
-    
-
-    def UAV_control_Strategy_LQR(self,instantaneous_state, Dt):
-        """ 
-        Made for LQR, for Murua, trimmed
-        
-        the correct LQR equation, including for trimming point is: utot = -K(xtot-xt) + ut
-        """
-       
-        # one could also use self.x_state_trimmed
-        # since it's just a matrix multiplication (linear) we decide to 
-        # precompute q_state_trimmed, so we only have to subtract length 32 vectors
-        #q = self.W_T_M@instantaneous_state
+    def PyControl_DoControllerStep(self, instantaneous_state, Dt):
         if self.method=="matlab":
             state_ml = matlab.double(instantaneous_state.tolist())  # 1×N or Nx1
-            out_ml = self.eng.UAV_control_Strategy_LQR(state_ml, Dt, nargout=1)
+            out_ml = self.eng.feval(self.control_function_or_model, state_ml, Dt, nargout=1)
             # out_ml is Python dict because MATLAB struct → dict
             output= {
-                "F1": float(out_ml['F1']), 
+                "F1": float(out_ml['F1']),
                 "F2": float(out_ml['F2']),
                 "F3": float(out_ml['F3']),
                 "F4": float(out_ml['F4']),
-                "E1": float(out_ml['E1']), 
+                "E1": float(out_ml['E1']),
                 "E2": float(out_ml['E2'])
             }
         elif self.method=="simulink_fmu":
@@ -268,7 +248,7 @@ class PyControl:
             state_array = np.array(instantaneous_state, dtype=np.float64).flatten()
             if len(state_array) != 1945:
                 raise ValueError("State vector must be 1945 long")
-                        
+                       
             t_vec = [self.time, self.time + self.Dt]
             u_mat = [state_array.tolist(), state_array.tolist()]
 
@@ -279,14 +259,12 @@ class PyControl:
 
             self.eng.workspace['statein'] = external_input
 
-            #self.eng.workspace['statein'] = matlab.double(state_array.tolist())
-
             # Short simulation
             self.eng.workspace['Tstart'] = self.time
             self.eng.workspace['Tstop']  = self.time + self.Dt
 
             out = self.eng.sim(
-                'UAV_Controller',
+                self.control_function_or_model,
                 'StartTime', 'Tstart',
                 'StopTime',  'Tstop',
                 'LoadExternalInput', 'on',
@@ -298,7 +276,7 @@ class PyControl:
             self.eng.workspace['simOut'] = out
 
             # Debug (run once, then you can comment out)
-            print("Fields in simOut:", self.eng.eval("fieldnames(simOut)", nargout=1))
+            # print("Fields in simOut:", self.eng.eval("fieldnames(simOut)", nargout=1))
 
             # Robust extraction — works whether 1 sample or many
             try:
@@ -310,7 +288,7 @@ class PyControl:
                     "E1": float(self.eng.eval("simOut.E1.Data(end)", nargout=1)),
                     "E2": float(self.eng.eval("simOut.E2.Data(end)", nargout=1)),
                 }
-                print("✅ Success — Control outputs:", output)   # remove after it works
+                # print("✅ Success — Control outputs:", output)   # remove after it works
 
             except Exception as e:
                 print("Extract failed (trying Array format fallback):", str(e))
@@ -326,24 +304,15 @@ class PyControl:
 
             self.time += self.Dt
 
-        elif self.method=="python":
-            # your existing PyControl call
-            dx = instantaneous_state-self.x_state_trimmed
-            du = dx
-                    
-            # Sending the final instructions
-            output = {}
-            output["F1"]=  du[0]
-            output["F2"]=  du[1]
-            output["F3"]=  du[2]
-            output["F4"]= du[3]
-            
-            # forcing the engine output
-            output["E1"]= du[4]
-            output["E2"]= du[5]
+        if self.method == "python":
+            if self.python_controller_instance is None:
+                raise RuntimeError("Python controller instance not initialized")
+            output = self.python_controller_instance.step(instantaneous_state, Dt)
+        #else:
+        #    pass
+            # ... other methods are possible ...
         print(output)
         return output
-
 
 
 class SimulinkFMUController:
@@ -413,50 +382,57 @@ class SimulinkFMUController:
 
 
 if __name__=="__main__":
-    
+
     method = "matlab"
     IsPrecomputed = False
-    
+
     # test_instantaneous_state is [10,11,12,13,...,19440,19450]
     # test_instantaneous_state has shape (1945,)
-    test_instantaneous_state = (np.arange(1945)+1)*10 
+    test_instantaneous_state = ((np.arange(1945) + 1) * 10).astype(float)
     test_Dt = 0.01
     
-    
+    if not IsPrecomputed:
+        precomputed_filename = None
+    elif method == "python":
+        precomputed_filename = "precomputed_python.npz"
+    else:
+        precomputed_filename = "precomputed.mat"
+
     if method == "python":
         ControlInstance = PyControl(
             control_directory="test_files/test_controllers/python",
-            startup_file="python_test_startup.py",
+            startup_file=None,
             control_file="python_test_controller.py",               # ← determines python method
-            precomputed_file=precomputed_filename,  # optional
-            save_precomputed_after_compute=True
+            precomputed_file= precomputed_filename, # optional
+            Dt=test_Dt
         )
 
     elif method == "matlab":
         ControlInstance = PyControl(
             control_directory="test_files/test_controllers/matlab/",
-            startup_file="matlab_test_startup.m",
+            startup_file="matlab_simulink_test_startup.m",
             control_file="matlab_test_controller.m",               # can be almost anything .m
             precomputed_file=precomputed_filename,
+            Dt=test_Dt
         )
     elif method == "simulink":
-        
+
         ControlInstance = PyControl(
             control_directory="test_files/test_controllers/simulink/",
-            startup_file="simulink_test_startup.m",
+            startup_file="matlab_simulink_test_startup.m",
             control_file="simulink_test_controller.slx",    # ← determines simulink method
             precomputed_file=precomputed_filename,   # optional
-            save_precomputed_after_compute=True
-        )
-    
-    elif method == "simulink_fmu":
-        
-        ControlInstance = PyControl(
-            control_directory="test_files/test_controllers/simulink_fmu/",
-            startup_file="simulink_fmu_test_startup.py",
-            control_file="simulink_test_controller.fmu",    # ← determines simulink method
-            precomputed_file=precomputed_filename,   # optional
-            save_precomputed_after_compute=True
+            Dt=test_Dt
         )
 
-    ControlInstance.UAV_control_Strategy_LQR(test_instantaneous_state, Dt=test_Dt)    
+    elif method == "simulink_fmu":
+
+        ControlInstance = PyControl(
+            control_directory="test_files/test_controllers/simulink_fmu/",
+            startup_file="python_simulinkfmu_test_startup.py",
+            control_file="simulink_test_controller.fmu",    # ← determines simulink method
+            precomputed_file=precomputed_filename,
+            Dt=test_Dt
+        )
+
+    ControlInstance.PyControl_DoControllerStep(test_instantaneous_state, Dt=test_Dt)
