@@ -16,14 +16,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 #from WingLoop_Library.PyControl_Text2Python import extract_states_vector
-from scipy.integrate import trapezoid
 import matlab.engine
 import fmpy
 import shutil
 from fmpy import read_model_description, extract, instantiate_fmu
 import sys
 from importlib import import_module
-import scipy.io
 
 import warnings
 
@@ -34,40 +32,23 @@ class PyControl:
     def __init__(
         self,
         control_directory: str,
-        startup_file: str,
         control_file: str,
         precomputed_file: str | None = None,
         library_path: str | None = None,          # ← NEW: optional path to WingLoop_Library or similar
         Dt: float = 0.01,
     ):
-        """
-        Args:
-            control_directory:      Folder containing startup_file, control_file, precomputed_file
-                                    (recommended: absolute path or relative to cwd)
-            startup_file:           Name of startup script (e.g. 'startup.m', 'compute_gains.py')
-            control_file:           Main controller file (determines method): .m / .py / .slx / .fmu
-            precomputed_file:       Optional name of precomputed data file (relative to control_directory)
-            library_path:           Optional path to additional MATLAB/Python library folder
-                                    (e.g. WingLoop_Library containing functions/FMUs)
-            Dt:                     Time step for controller
-        """
+
         # Normalize and make control_directory absolute → safer
         self.control_directory = os.path.abspath(os.path.normpath(control_directory))
         if not os.path.isdir(self.control_directory):
             raise NotADirectoryError(f"control_directory does not exist or is not a folder: {self.control_directory}")
 
-        self.startup_file = startup_file
         self.control_file = control_file
         self.precomputed_file = precomputed_file
         self.Dt = Dt
 
-        # Full startup paths (relative → absolute resolution)
-        self.startup_path = os.path.join(self.control_directory, startup_file) if startup_file else None
-        if self.startup_path and not os.path.isfile(self.startup_path):
-            raise FileNotFoundError(f"Startup file not found: {self.startup_path}")
-        self.control_path = os.path.join(self.control_directory, control_file)
-
         # Full control paths (relative → absolute resolution)
+        self.control_path = os.path.join(self.control_directory, control_file)
         if not os.path.isfile(self.control_path):
             raise FileNotFoundError(f"Control file not found: {self.control_path}")
         
@@ -190,13 +171,15 @@ class PyControl:
             precomp_path_mat = self.precomputed_path or ""
             self.matlab_controller_instance = self.eng.UserController(precomp_path_mat)
             # For simulink, set to base workspace
-            #if self.method == "simulink":
-            #    self.eng.feval('setToBaseWorkspace', self.matlab_controller_instance)
+            if self.method == "simulink":
+                self.eng.feval('setToBaseWorkspace', self.matlab_controller_instance)
+
+                self.fmu_controller()
             ## For fmu, get data and set on FMU
             #elif self.method == "simulink_fmu":
             #    #data_ml = self.eng.feval('getInitialData', self.matlab_controller_instance, nargout=1)
             #    data_ml = self.eng.UserController(precomp_path_mat)
-            #    # Convert matlab.struct to Python dict
+                # Convert matlab.struct to Python dict
             #    data = {k: np.array(v) for k, v in data_ml.items()}
             #    param_vrs = {v.name: v.valueReference for v in self.fmu_controller.model_description.modelVariables if v.causality == 'parameter'}
             #    for key, value in data.items():
@@ -221,8 +204,6 @@ class PyControl:
 
         elif self.method == "simulink":
             state_array = np.array(instantaneous_state, dtype=np.float64).flatten()
-            if len(state_array) != 1945:
-                raise ValueError("State vector must be 1945 long")
                        
             t_vec = [self.time, self.time + self.Dt]
             u_mat = [state_array.tolist(), state_array.tolist()]
@@ -359,7 +340,7 @@ class SimulinkFMUController:
 if __name__=="__main__":
 
     method = "simulink_fmu"
-    IsPrecomputed = False
+    IsPrecomputed = True
 
     # test_instantaneous_state is [10,11,12,13,...,19440,19450]
     # test_instantaneous_state has shape (1945,)
@@ -376,7 +357,6 @@ if __name__=="__main__":
     if method == "python":
         ControlInstance = PyControl(
             control_directory="test_files/test_controllers/python",
-            startup_file=None,
             control_file="python_test_controller.py",               # ← determines python method
             precomputed_file= precomputed_filename, # optional
             Dt=test_Dt
@@ -385,7 +365,6 @@ if __name__=="__main__":
     elif method == "matlab":
         ControlInstance = PyControl(
             control_directory="test_files/test_controllers/matlab/",
-            startup_file=None,
             control_file="UserController.m",               # can be almost anything .m
             precomputed_file=precomputed_filename,
             Dt=test_Dt
@@ -394,7 +373,6 @@ if __name__=="__main__":
 
         ControlInstance = PyControl(
             control_directory="test_files/test_controllers/simulink/",
-            startup_file=None,
             control_file="simulink_test_controller.slx",    # ← determines simulink method
             precomputed_file=precomputed_filename,   # optional
             Dt=test_Dt
@@ -404,7 +382,6 @@ if __name__=="__main__":
 
         ControlInstance = PyControl(
             control_directory="test_files/test_controllers/simulink_fmu/",
-            startup_file=None,
             control_file="simulink_test_controller.fmu",    # ← determines simulink method
             precomputed_file=precomputed_filename,
             Dt=test_Dt

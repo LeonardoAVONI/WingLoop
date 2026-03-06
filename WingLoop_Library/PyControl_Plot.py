@@ -7,6 +7,10 @@ What I want on the graph:
     Model variables to plot according to a user-provided list
     One live-updating version, and one final version.
     The functions would receive the dictionary at each timestep
+
+Also how much time is taken (computer time)
+
+Also (note for PyControl) can we have the graphs in Simulink (not fmu, just simulink)
     
 
 The following dictionary structure as input
