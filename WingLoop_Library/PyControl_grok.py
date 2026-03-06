@@ -6,385 +6,579 @@ Author: Leonardo AVONI
 Date: 08/11/2024
 Email: avonileonardo@gmail.com
 
-Last modified: 29/05/2025
+Last modified: 06/03/2026
 
 ====================================================================================
 
+Description:
+Step-by-step controller wrapper supporting:
+  - python   : pure Python UserController class
+  - matlab   : MATLAB UserController class via matlab.engine
+  - simulink : Simulink .slx model, stepped via eng.sim() with ExternalInput
+  - simulink_fmu : FMU exported from Simulink, stepped via fmpy
+
+For simulink and simulink_fmu, a UserController.m can live in the control_directory.
+Its workspace properties (workspace_scalar, workspace_string, workspace_matrix) are
+pushed to the MATLAB base workspace so Simulink can read them during simulation.
+
+====================================================================================
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
 import os
-#from WingLoop_Library.PyControl_Text2Python import extract_states_vector
-import matlab.engine
-import fmpy
 import shutil
-from fmpy import read_model_description, extract, instantiate_fmu
 import sys
+import warnings
 from importlib import import_module
 
-import warnings
+import matlab.engine
+import fmpy
+from fmpy import read_model_description, extract, instantiate_fmu
 
-class PyControl:
-    """
-    Control class, containing the various control laws and history tracking of the variables used in Python
-    """
-    def __init__(
-        self,
-        control_directory: str,
-        control_file: str,
-        precomputed_file: str | None = None,
-        library_path: str | None = None,          # ← NEW: optional path to WingLoop_Library or similar
-        Dt: float = 0.01,
-    ):
 
-        # Normalize and make control_directory absolute → safer
-        self.control_directory = os.path.abspath(os.path.normpath(control_directory))
-        if not os.path.isdir(self.control_directory):
-            raise NotADirectoryError(f"control_directory does not exist or is not a folder: {self.control_directory}")
-
-        self.control_file = control_file
-        self.precomputed_file = precomputed_file
-        self.Dt = Dt
-
-        # Full control paths (relative → absolute resolution)
-        self.control_path = os.path.join(self.control_directory, control_file)
-        if not os.path.isfile(self.control_path):
-            raise FileNotFoundError(f"Control file not found: {self.control_path}")
-        
-        # Full precomputed paths (relative → absolute resolution)
-        self.precomputed_path = os.path.join(self.control_directory, precomputed_file) if precomputed_file else None
-        if self.precomputed_path and not os.path.isfile(self.precomputed_path):
-            warnings.warn(
-                f"Precomputed file specified but not found → will compute instead.\n"
-                f"Missing: {self.precomputed_path}",
-                UserWarning
-            )
-            self.precomputed_path = None
-
-        # Library / toolbox path (used for MATLAB addpath and FMU location)
-        if library_path is None:
-            # Fallback: try to guess common locations (customize this!)
-            possible = [
-                os.path.expanduser("~/Bureau/01 Github/02_WingLoop/WingLoop_Library"),
-                os.path.expanduser("~/GitHub/02_WingLoop/WingLoop_Library"),
-                os.getcwd(),  # last resort
-            ]
-            for p in possible:
-                if os.path.isdir(p):
-                    library_path = p
-                    break
-            else:
-                library_path = self.control_directory  # fallback
-        self.library_path = os.path.abspath(library_path)
-
-        # Determine method
-        ext = os.path.splitext(control_file)[1].lower()
-        method_map = {
-            '.py':  "python",
-            '.m':   "matlab",
-            '.slx': "simulink",
-            '.fmu': "simulink_fmu",
-        }
-        if ext not in method_map:
-            raise ValueError(f"Unsupported control_file extension: {ext} (file: {control_file})")
-        self.method = method_map[ext]
-
-        # Store control function/model name for later use
-        self.control_function_or_model = os.path.splitext(control_file)[0]
-
-        self.eng = None
-        self.time = 0.0
-        self.fmu_controller = None
-        self.python_controller_instance = None  # For python class instance
-        self.matlab_controller_instance = None  # For matlab class instance
-
-        # MATLAB engine setup for MATLAB-related methods
-        if self.method in ["matlab", "simulink", "simulink_fmu"]:
-            self.eng = matlab.engine.start_matlab("-nodesktop -nosplash -nojvm")  # -nojvm often faster
-
-            # 1. Change directory → most reliable
-            self.eng.cd(self.control_directory, nargout=0)
-
-            # 2. Add library path (utilities, functions, etc.)
-            self.eng.addpath(self.library_path, nargout=0)
-
-        # Simulink model setup
-        if self.method == "simulink":
-            try:
-                self.eng.load_system(self.control_function_or_model, nargout=0)
-                self.eng.set_param(self.control_function_or_model, 'ReturnWorkspaceOutputs', 'on', nargout=0)
-                self.eng.set_param(self.control_function_or_model, 'SignalLogging', 'on', nargout=0)
-            except Exception as e:
-                raise RuntimeError(f"Failed to load/configure Simulink model '{self.control_function_or_model}': {e}")
-
-        # FMU setup
-        elif self.method == "simulink_fmu":
-            # FMU is usually in library_path or control_directory
-            possible_fmu_locations = [
-                os.path.join(self.library_path, control_file),
-                os.path.join(self.control_directory, control_file),
-                control_file,  # if absolute
-            ]
-            fmu_path = None
-            for cand in possible_fmu_locations:
-                if os.path.isfile(cand):
-                    fmu_path = cand
-                    break
-            if fmu_path is None:
-                raise FileNotFoundError(f"FMU not found. Tried:\n" + "\n".join(possible_fmu_locations))
-
-            self.fmu_controller = SimulinkFMUController(
-                fmu_path=fmu_path,
-                Dt=self.Dt
-            )
-
-        # Run setup
-        self.setup()
-
-    def setup(self):
-        """
-        Handles step 1 (compute) or step 2 (load precomputed).
-        Makes variables accessible for step 3 (simulation).
-        """
-        if self.method == "python":
-            sys.path.append(self.control_directory)
-            control_mod_name = os.path.splitext(self.control_file)[0]
-            control_mod = import_module(control_mod_name)
-
-            # Convention: the class must be named UserController
-            # (you can make this configurable later if needed)
-            try:
-                UserControllerClass = getattr(control_mod, 'UserController')
-            except AttributeError:
-                raise AttributeError(
-                    f"Python control file '{self.control_file}' must define a class named 'UserController'"
-                )
-
-            # Instantiate — pass paths so the class decides what to do
-            self.python_controller_instance = UserControllerClass(
-                precomputed_file_path = self.precomputed_path,  # full path or None
-            )
-
-        elif self.method in ["matlab", "simulink", "simulink_fmu"]:
-            # Instantiate MATLAB UserController class — it handles precomputed or default compute
-            precomp_path_mat = self.precomputed_path or ""
-            self.matlab_controller_instance = self.eng.UserController(precomp_path_mat)
-            # For simulink, set to base workspace
-            if self.method == "simulink":
-                self.eng.feval('setToBaseWorkspace', self.matlab_controller_instance)
-
-                self.fmu_controller()
-            ## For fmu, get data and set on FMU
-            #elif self.method == "simulink_fmu":
-            #    #data_ml = self.eng.feval('getInitialData', self.matlab_controller_instance, nargout=1)
-            #    data_ml = self.eng.UserController(precomp_path_mat)
-                # Convert matlab.struct to Python dict
-            #    data = {k: np.array(v) for k, v in data_ml.items()}
-            #    param_vrs = {v.name: v.valueReference for v in self.fmu_controller.model_description.modelVariables if v.causality == 'parameter'}
-            #    for key, value in data.items():
-            #        if key in param_vrs:
-            #            self.fmu_controller.fmu.setReal([param_vrs[key]], value.flatten().tolist())
-
-    def PyControl_DoControllerStep(self, instantaneous_state, Dt):
-        if self.method=="matlab":
-            state_ml = matlab.double(instantaneous_state.tolist())  # 1×N or Nx1
-            out_ml = self.eng.feval('step', self.matlab_controller_instance, state_ml, Dt, nargout=1)
-            # out_ml is Python dict because MATLAB struct → dict
-            output= {
-                "F1": float(out_ml['F1']),
-                "F2": float(out_ml['F2']),
-                "F3": float(out_ml['F3']),
-                "F4": float(out_ml['F4']),
-                "E1": float(out_ml['E1']),
-                "E2": float(out_ml['E2'])
-            }
-        elif self.method=="simulink_fmu":
-            output = self.fmu_controller.step(instantaneous_state)
-
-        elif self.method == "simulink":
-            state_array = np.array(instantaneous_state, dtype=np.float64).flatten()
-                       
-            t_vec = [self.time, self.time + self.Dt]
-            u_mat = [state_array.tolist(), state_array.tolist()]
-
-            external_input = matlab.double(
-                [[t_vec[0]] + u_mat[0],
-                [t_vec[1]] + u_mat[1]]
-            )
-
-            self.eng.workspace['statein'] = external_input
-
-            # Short simulation
-            self.eng.workspace['Tstart'] = self.time
-            self.eng.workspace['Tstop']  = self.time + self.Dt
-
-            out = self.eng.sim(
-                self.control_function_or_model,
-                'StartTime', 'Tstart',
-                'StopTime',  'Tstop',
-                'LoadExternalInput', 'on',
-                'ExternalInput', 'statein',
-                nargout=1
-            )
-
-            # === CRITICAL: Push the SimulationOutput to MATLAB workspace ===
-            self.eng.workspace['simOut'] = out
-
-            # Debug (run once, then you can comment out)
-            # print("Fields in simOut:", self.eng.eval("fieldnames(simOut)", nargout=1))
-
-            # Robust extraction — works whether 1 sample or many
-            try:
-                output = {
-                    "F1": float(self.eng.eval("simOut.F1.Data(end)", nargout=1)),
-                    "F2": float(self.eng.eval("simOut.F2.Data(end)", nargout=1)),
-                    "F3": float(self.eng.eval("simOut.F3.Data(end)", nargout=1)),
-                    "F4": float(self.eng.eval("simOut.F4.Data(end)", nargout=1)),
-                    "E1": float(self.eng.eval("simOut.E1.Data(end)", nargout=1)),
-                    "E2": float(self.eng.eval("simOut.E2.Data(end)", nargout=1)),
-                }
-                # print("✅ Success — Control outputs:", output)   # remove after it works
-
-            except Exception as e:
-                print("Extract failed (trying Array format fallback):", str(e))
-                # Fallback if someone accidentally set Save format = Array
-                output = {
-                    "F1": float(self.eng.eval("simOut.F1(end)", nargout=1)),
-                    "F2": float(self.eng.eval("simOut.F2(end)", nargout=1)),
-                    "F3": float(self.eng.eval("simOut.F3(end)", nargout=1)),
-                    "F4": float(self.eng.eval("simOut.F4(end)", nargout=1)),
-                    "E1": float(self.eng.eval("simOut.E1(end)", nargout=1)),
-                    "E2": float(self.eng.eval("simOut.E2(end)", nargout=1)),
-                }
-
-            self.time += self.Dt
-
-        if self.method == "python":
-            if self.python_controller_instance is None:
-                raise RuntimeError("Python controller instance not initialized")
-            output = self.python_controller_instance.step(instantaneous_state, Dt)
-        #else:
-        #    pass
-            # ... other methods are possible ...
-        print(output)
-        return output
-
+# ──────────────────────────────────────────────────────────────────────────────
+# FMU helper
+# ──────────────────────────────────────────────────────────────────────────────
 
 class SimulinkFMUController:
-    def __init__(self, fmu_path, Dt=0.01):
-        """
-        fmu_path: full path to your .fmu file (string)
-        """
+    """
+    Thin wrapper around an FMU exported from Simulink (Co-Simulation, FMI 2.0).
+    Inputs  : statein[1] … statein[N]  (Real, per‑element)
+    Outputs : F1, F2, F3, F4, E1, E2
+    """
+
+    def __init__(self, fmu_path: str, Dt: float = 0.01):
         self.fmu_path = fmu_path
-        self.Dt = Dt
-        self.time = 0.0
-        self.unzipdir = None
-        self.fmu = None
+        self.Dt       = Dt
+        self.time     = 0.0
 
-        # Parse the model description (returns ModelDescription object)
         self.model_description = read_model_description(self.fmu_path)
-
-        # Extract FMU contents to a temp directory (returns the unzip path string)
-        self.unzipdir = extract(self.fmu_path)  # auto temp dir if not specified
-
-        # Instantiate correctly:
-        # 1st arg: unzip directory (string)
-        # 2nd arg: model_description (ModelDescription object, NOT string!)
-        self.fmu = instantiate_fmu(
-            unzipdir=self.unzipdir,
-            model_description=self.model_description,
-            visible=False,
-            debug_logging=False  # change to True for FMI debug output during dev
+        self.unzipdir          = extract(self.fmu_path)
+        self.fmu               = instantiate_fmu(
+            unzipdir          = self.unzipdir,
+            model_description = self.model_description,
+            visible           = False,
+            debug_logging     = False,
         )
 
+        # Cache sorted input VRs once
+        input_vars = [
+            v for v in self.model_description.modelVariables
+            if v.name.startswith('statein[')
+        ]
+        input_vars.sort(key=lambda v: v.valueReference)
+        self._input_vrs    = [v.valueReference for v in input_vars]
+        self._n_inputs     = len(input_vars)
 
-    def step(self, instantaneous_state):
+        # Cache output VRs
+        output_names = ['F1', 'F2', 'F3', 'F4', 'E1', 'E2']
+        self._output_vrs = [
+            next(
+                (v.valueReference for v in self.model_description.modelVariables if v.name == n),
+                None,
+            )
+            for n in output_names
+        ]
+        self._output_names = output_names
+
+    # ------------------------------------------------------------------
+    def set_parameters(self, params: dict):
+        """
+        Set FMU parameters (causality == 'parameter') from a dict {name: value}.
+        Call this BEFORE the first step() call.
+        """
+        param_vrs = {
+            v.name: v.valueReference
+            for v in self.model_description.modelVariables
+            if v.causality == 'parameter'
+        }
+        for key, value in params.items():
+            if key in param_vrs:
+                val = np.atleast_1d(np.array(value, dtype=np.float64)).flatten().tolist()
+                self.fmu.setReal([param_vrs[key]], val)
+            else:
+                warnings.warn(f"[FMU] Parameter '{key}' not found in FMU — skipped.", UserWarning)
+
+    # ------------------------------------------------------------------
+    def step(self, instantaneous_state) -> dict:
         state_array = np.array(instantaneous_state, dtype=np.float64).flatten()
 
-        # Get all input variables for InputState[1..1945]
-        input_vars = [v for v in self.model_description.modelVariables if v.name.startswith('statein[')]
-        input_vars.sort(key=lambda v: v.valueReference)  # Ensure correct order
+        if len(state_array) != self._n_inputs:
+            raise ValueError(
+                f"State length {len(state_array)} != FMU input count {self._n_inputs}"
+            )
 
-        if len(state_array) != len(input_vars):
-            raise ValueError(f"State vector length ({len(state_array)}) does not match FMU input count ({len(input_vars)})")
-
-        input_vrs = [v.valueReference for v in input_vars]
-
-        # Set all 1945 inputs at once
-        self.fmu.setReal(input_vrs, state_array.tolist())
-
-        # Advance FMU
-        self.fmu.doStep(currentCommunicationPoint=self.time, communicationStepSize=self.Dt)
+        self.fmu.setReal(self._input_vrs, state_array.tolist())
+        self.fmu.doStep(
+            currentCommunicationPoint = self.time,
+            communicationStepSize     = self.Dt,
+        )
         self.time += self.Dt
 
-        # Get outputs
-        output_names = ['F1', 'F2', 'F3', 'F4', 'E1', 'E2']
-        output_vrs = [next((v.valueReference for v in self.model_description.modelVariables if v.name == n), None)
-                    for n in output_names]
-        output_values = self.fmu.getReal(output_vrs)
-        return dict(zip(output_names, [float(v) for v in output_values]))
+        values = self.fmu.getReal(self._output_vrs)
+        return dict(zip(self._output_names, [float(v) for v in values]))
 
+    # ------------------------------------------------------------------
     def terminate(self):
-        """Call this when done (e.g. in WingLoop cleanup) to free resources"""
         if self.fmu:
             try:
                 self.fmu.terminate()
-            except:
+            except Exception:
                 pass
         if self.unzipdir and os.path.exists(self.unzipdir):
             shutil.rmtree(self.unzipdir, ignore_errors=True)
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Main controller class
+# ──────────────────────────────────────────────────────────────────────────────
 
-if __name__=="__main__":
+class PyControl:
+    """
+    Unified step-by-step controller wrapper.
 
-    method = "simulink_fmu"
+    Parameters
+    ----------
+    control_directory : str
+        Folder that contains the controller file (and UserController.m for
+        simulink / simulink_fmu).
+    control_file : str
+        Filename whose extension determines the method:
+          .py  → python
+          .m   → matlab
+          .slx → simulink
+          .fmu → simulink_fmu
+    precomputed_file : str | None
+        Optional filename (inside control_directory) for pre-computed data.
+        If None or not found, UserController will compute its own defaults.
+    library_path : str | None
+        Root of WingLoop_Library (used for MATLAB addpath). Auto-detected if None.
+    Dt : float
+        Default timestep (seconds).
+    """
+
+    # ------------------------------------------------------------------
+    def __init__(
+        self,
+        control_directory: str,
+        control_file:      str,
+        precomputed_file:  str | None = None,
+        library_path:      str | None = None,
+        Dt:                float       = 0.01,
+    ):
+        # ── paths ──────────────────────────────────────────────────────
+        self.control_directory = os.path.abspath(os.path.normpath(control_directory))
+        if not os.path.isdir(self.control_directory):
+            raise NotADirectoryError(
+                f"control_directory does not exist: {self.control_directory}"
+            )
+
+        self.control_file = control_file
+        self.control_path = os.path.join(self.control_directory, control_file)
+        if not os.path.isfile(self.control_path):
+            raise FileNotFoundError(f"Control file not found: {self.control_path}")
+
+        self.precomputed_path = None
+        if precomputed_file:
+            p = os.path.join(self.control_directory, precomputed_file)
+            if os.path.isfile(p):
+                self.precomputed_path = p
+            else:
+                warnings.warn(
+                    f"Precomputed file not found → will compute defaults.\nMissing: {p}",
+                    UserWarning,
+                )
+
+        # ── library path ───────────────────────────────────────────────
+        if library_path is None:
+            candidates = [
+                os.path.expanduser("~/Desktop/01_GitHub/02_WingLoop/WingLoop_Library"),
+                os.path.expanduser("~/Bureau/01 Github/02_WingLoop/WingLoop_Library"),
+                os.path.expanduser("~/GitHub/02_WingLoop/WingLoop_Library"),
+                os.getcwd(),
+            ]
+            library_path = next((p for p in candidates if os.path.isdir(p)), self.control_directory)
+        self.library_path = os.path.abspath(library_path)
+
+        # ── method ─────────────────────────────────────────────────────
+        ext = os.path.splitext(control_file)[1].lower()
+        method_map = {'.py': 'python', '.m': 'matlab', '.slx': 'simulink', '.fmu': 'simulink_fmu'}
+        if ext not in method_map:
+            raise ValueError(f"Unsupported extension '{ext}' in '{control_file}'")
+        self.method = method_map[ext]
+        self.control_model_name = os.path.splitext(control_file)[0]
+
+        # ── state ──────────────────────────────────────────────────────
+        self.Dt   = Dt
+        self.time = 0.0
+
+        self.eng                       = None
+        self.fmu_controller            = None
+        self.python_controller_instance = None
+        self.matlab_controller_instance = None   # MATLAB UserController handle
+
+        # ── MATLAB engine (shared by matlab / simulink / simulink_fmu) ─
+        if self.method in ('matlab', 'simulink', 'simulink_fmu'):
+            print(f"[PyControl] Starting MATLAB engine for method='{self.method}' …")
+            self.eng = matlab.engine.start_matlab("-nodesktop -nosplash")
+            self.eng.cd(self.control_directory, nargout=0)
+            self.eng.addpath(self.control_directory, nargout=0)
+            self.eng.addpath(self.library_path, nargout=0)
+
+        # ── Simulink model pre-load ────────────────────────────────────
+        if self.method == 'simulink':
+            try:
+                self.eng.load_system(self.control_model_name, nargout=0)
+                self.eng.set_param(self.control_model_name, 'ReturnWorkspaceOutputs', 'on', nargout=0)
+                self.eng.set_param(self.control_model_name, 'SignalLogging',           'on', nargout=0)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to load Simulink model '{self.control_model_name}': {exc}"
+                ) from exc
+
+        # ── FMU instantiation ──────────────────────────────────────────
+        elif self.method == 'simulink_fmu':
+            self.fmu_controller = SimulinkFMUController(
+                fmu_path = self.control_path,
+                Dt       = self.Dt,
+            )
+
+        # ── Setup (load/compute UserController data) ───────────────────
+        self._setup()
+
+    # ------------------------------------------------------------------
+    def _setup(self):
+        """
+        Instantiate UserController (Python or MATLAB) so it either loads
+        pre-computed data or runs its default computation.
+        For simulink / simulink_fmu the resulting workspace variables are
+        pushed where they need to go (MATLAB base workspace / FMU params).
+        """
+
+        if self.method == 'python':
+            sys.path.insert(0, self.control_directory)
+            mod_name = self.control_model_name
+            mod      = import_module(mod_name)
+            try:
+                UserControllerClass = getattr(mod, 'UserController')
+            except AttributeError:
+                raise AttributeError(
+                    f"'{self.control_file}' must define a class named 'UserController'."
+                )
+            self.python_controller_instance = UserControllerClass(
+                precomputed_file_path = self.precomputed_path or "",
+            )
+
+        elif self.method in ('matlab', 'simulink', 'simulink_fmu'):
+            # Instantiate MATLAB UserController (handles precomputed or default)
+            precomp_arg = self.precomputed_path if self.precomputed_path else ""
+            print(f"[PyControl] Instantiating MATLAB UserController …")
+            self.matlab_controller_instance = self.eng.UserController(precomp_arg)
+
+            # ── Push workspace variables to MATLAB base workspace ──────
+            # This is what makes them visible to Simulink's model workspace
+            # or MATLAB functions called during simulation.
+            # We use assignin('base', ...) which is the standard MATLAB way.
+            self._push_controller_to_base_workspace()
+
+            # ── For FMU: also attempt to set matching FMU parameters ───
+            if self.method == 'simulink_fmu':
+                self._push_controller_to_fmu()
+
+    # ------------------------------------------------------------------
+    def _extract_controller_data(self) -> dict:
+        """
+        Pull the three standard properties out of the MATLAB UserController handle
+        and return them as plain Python / NumPy objects.
+
+        Returns a dict with keys:
+            'workspace_scalar'  : float
+            'workspace_string'  : str
+            'workspace_matrix'  : np.ndarray
+
+        Uses a valid MATLAB variable name (no leading underscore).
+        """
+        # 'uc_handle' — no leading underscore, fully valid in MATLAB
+        self.eng.workspace['uc_handle'] = self.matlab_controller_instance
+
+        scalar = float(self.eng.eval("uc_handle.workspace_scalar", nargout=1))
+        string = str(self.eng.eval("char(uc_handle.workspace_string)", nargout=1))
+        matrix = np.array(self.eng.eval("uc_handle.workspace_matrix", nargout=1))
+
+        return {
+            'workspace_scalar': scalar,
+            'workspace_string': string,
+            'workspace_matrix': matrix,
+        }
+
+    # ------------------------------------------------------------------
+    def _push_controller_to_base_workspace(self):
+        """
+        Push UserController's workspace properties into MATLAB's *base* workspace
+        via assignin() so Simulink can read them by name during sim().
+
+        UserController must expose:
+            obj.workspace_scalar  (double)
+            obj.workspace_string  (string / char)
+            obj.workspace_matrix  (double matrix)
+        """
+        if self.matlab_controller_instance is None:
+            return
+
+        try:
+            data = self._extract_controller_data()
+
+            # assignin('base', ...) is the standard way to write to the base
+            # workspace from within a MATLAB function / engine session.
+            # We push uc_handle first so the eval calls have it available.
+            self.eng.eval(
+                "assignin('base', 'workspace_scalar', uc_handle.workspace_scalar);",
+                nargout=0,
+            )
+            self.eng.eval(
+                "assignin('base', 'workspace_string', uc_handle.workspace_string);",
+                nargout=0,
+            )
+            self.eng.eval(
+                "assignin('base', 'workspace_matrix', uc_handle.workspace_matrix);",
+                nargout=0,
+            )
+            print(
+                f"[PyControl] Pushed to MATLAB base workspace:\n"
+                f"   workspace_scalar = {data['workspace_scalar']}\n"
+                f"   workspace_string = {data['workspace_string']}\n"
+                f"   workspace_matrix shape = {data['workspace_matrix'].shape}"
+            )
+            # Store for potential use by FMU
+            self._controller_data = data
+
+        except Exception as exc:
+            raise RuntimeError(
+                f"[PyControl] Failed to push UserController properties to base workspace.\n"
+                f"Make sure UserController.m is on the MATLAB path and exposes "
+                f"workspace_scalar, workspace_string, workspace_matrix.\nError: {exc}"
+            ) from exc
+
+    # ------------------------------------------------------------------
+    def _push_controller_to_fmu(self):
+        """
+        Attempt to push UserController data to the FMU as parameters.
+
+        An FMU exported from Simulink is a compiled binary — it only exposes
+        variables that were explicitly marked as 'parameter' (tunable) at
+        export time.  If none of the workspace_* variables are exported as
+        FMU parameters, they simply cannot be injected post-compilation and
+        this method will print a diagnostic rather than crash.
+
+        To make workspace_scalar / workspace_matrix available inside your
+        Simulink model when exporting to FMU, mark them as tunable parameters
+        in the Simulink model workspace before exporting.
+        """
+        if self.fmu_controller is None:
+            return
+
+        # Use data already extracted during _push_controller_to_base_workspace,
+        # or re-extract if called standalone.
+        data = getattr(self, '_controller_data', None)
+        if data is None:
+            if self.matlab_controller_instance is None:
+                return
+            try:
+                data = self._extract_controller_data()
+                self._controller_data = data
+            except Exception as exc:
+                warnings.warn(
+                    f"[PyControl] Could not extract UserController data for FMU: {exc}",
+                    UserWarning,
+                )
+                return
+
+        # Gather FMU parameter names (causality == 'parameter')
+        fmu_param_names = {
+            v.name
+            for v in self.fmu_controller.model_description.modelVariables
+            if v.causality == 'parameter'
+        }
+
+        injected = []
+        skipped  = []
+        for key in ('workspace_scalar', 'workspace_string', 'workspace_matrix'):
+            value = data[key]
+            if key == 'workspace_string':
+                skipped.append(f"{key} (strings not supported as FMU Real params)")
+                continue
+            if key in fmu_param_names:
+                try:
+                    self.fmu_controller.set_parameters({key: value})
+                    injected.append(key)
+                except Exception as exc:
+                    skipped.append(f"{key} (set failed: {exc})")
+            else:
+                skipped.append(f"{key} (not exposed as FMU parameter)")
+
+        if injected:
+            print(f"[PyControl] FMU parameters set: {injected}")
+        if skipped:
+            print(
+                f"[PyControl] FMU parameter injection skipped for: {skipped}\n"
+                f"   → To inject these, mark them as tunable parameters before exporting the FMU."
+            )
+
+    # ------------------------------------------------------------------
+    def PyControl_DoControllerStep(self, instantaneous_state, Dt: float | None = None) -> dict:
+        """
+        Run one control step.
+
+        Parameters
+        ----------
+        instantaneous_state : array-like, shape (N,)
+        Dt : float | None
+            If None, uses self.Dt set at construction.
+
+        Returns
+        -------
+        dict with keys F1, F2, F3, F4, E1, E2
+        """
+        if Dt is None:
+            Dt = self.Dt
+
+        # ── Python ────────────────────────────────────────────────────
+        if self.method == 'python':
+            if self.python_controller_instance is None:
+                raise RuntimeError("Python controller not initialized.")
+            output = self.python_controller_instance.step(instantaneous_state, Dt)
+
+        # ── MATLAB ────────────────────────────────────────────────────
+        elif self.method == 'matlab':
+            state_ml = matlab.double(
+                np.array(instantaneous_state, dtype=np.float64).flatten().tolist()
+            )
+            out_ml = self.eng.feval('step', self.matlab_controller_instance, state_ml, Dt, nargout=1)
+            output = {k: float(out_ml[k]) for k in ('F1', 'F2', 'F3', 'F4', 'E1', 'E2')}
+
+        # ── Simulink FMU ───────────────────────────────────────────────
+        elif self.method == 'simulink_fmu':
+            output = self.fmu_controller.step(instantaneous_state)
+
+        # ── Simulink (.slx) ───────────────────────────────────────────
+        elif self.method == 'simulink':
+            output = self._simulink_step(instantaneous_state, Dt)
+
+        else:
+            raise ValueError(f"Unknown method: {self.method}")
+
+        print(output)
+        return output
+
+    # ------------------------------------------------------------------
+    def _simulink_step(self, instantaneous_state, Dt: float) -> dict:
+        """
+        Advance the Simulink model by one Dt using eng.sim() with ExternalInput.
+        Mirrors the approach in previous_file.py that is known to work.
+        """
+        state_array = np.array(instantaneous_state, dtype=np.float64).flatten()
+
+        t0 = self.time
+        t1 = self.time + Dt
+
+        # Build external-input matrix  [t, u_vector; t+Dt, u_vector]
+        # Simulink's ExternalInput expects columns: [time, u1, u2, …]
+        external_input = matlab.double(
+            [[t0] + state_array.tolist(),
+             [t1] + state_array.tolist()]
+        )
+
+        # Push to MATLAB workspace (NOT base workspace — eng.sim reads from
+        # the engine workspace when given string variable names)
+        self.eng.workspace['statein'] = external_input
+        self.eng.workspace['Tstart']  = float(t0)
+        self.eng.workspace['Tstop']   = float(t1)
+
+        # Run the simulation for one step
+        out = self.eng.sim(
+            self.control_model_name,
+            'StartTime',        'Tstart',
+            'StopTime',         'Tstop',
+            'LoadExternalInput','on',
+            'ExternalInput',    'statein',
+            nargout=1,
+        )
+
+        # Push SimulationOutput object so we can use eval() to extract fields
+        self.eng.workspace['simOut'] = out
+
+        # Extract outputs — try Dataset format first, fall back to Array format
+        try:
+            output = {
+                "F1": float(self.eng.eval("simOut.F1.Data(end)", nargout=1)),
+                "F2": float(self.eng.eval("simOut.F2.Data(end)", nargout=1)),
+                "F3": float(self.eng.eval("simOut.F3.Data(end)", nargout=1)),
+                "F4": float(self.eng.eval("simOut.F4.Data(end)", nargout=1)),
+                "E1": float(self.eng.eval("simOut.E1.Data(end)", nargout=1)),
+                "E2": float(self.eng.eval("simOut.E2.Data(end)", nargout=1)),
+            }
+        except Exception:
+            # Fallback: Save format = Array
+            output = {
+                "F1": float(self.eng.eval("simOut.F1(end)", nargout=1)),
+                "F2": float(self.eng.eval("simOut.F2(end)", nargout=1)),
+                "F3": float(self.eng.eval("simOut.F3(end)", nargout=1)),
+                "F4": float(self.eng.eval("simOut.F4(end)", nargout=1)),
+                "E1": float(self.eng.eval("simOut.E1(end)", nargout=1)),
+                "E2": float(self.eng.eval("simOut.E2(end)", nargout=1)),
+            }
+
+        self.time += Dt
+        return output
+
+    # ------------------------------------------------------------------
+    def terminate(self):
+        """Release all resources (FMU + MATLAB engine)."""
+        if self.fmu_controller:
+            self.fmu_controller.terminate()
+        if self.eng:
+            try:
+                self.eng.quit()
+            except Exception:
+                pass
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Quick test
+# ──────────────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+
+    method        = "simulink"   # change to: python | matlab | simulink | simulink_fmu
     IsPrecomputed = True
 
-    # test_instantaneous_state is [10,11,12,13,...,19440,19450]
-    # test_instantaneous_state has shape (1945,)
     test_instantaneous_state = ((np.arange(1945) + 1) * 10).astype(float)
     test_Dt = 0.01
-    
-    if not IsPrecomputed:
-        precomputed_filename = None
-    elif method == "python":
-        precomputed_filename = "precomputed_python.npz"
-    else:
-        precomputed_filename = "precomputed.mat"
 
-    if method == "python":
-        ControlInstance = PyControl(
-            control_directory="test_files/test_controllers/python",
-            control_file="python_test_controller.py",               # ← determines python method
-            precomputed_file= precomputed_filename, # optional
-            Dt=test_Dt
-        )
+    precomputed_filename = None
+    if IsPrecomputed:
+        precomputed_filename = "precomputed_python.npz" if method == "python" else "precomputed.mat"
 
-    elif method == "matlab":
-        ControlInstance = PyControl(
-            control_directory="test_files/test_controllers/matlab/",
-            control_file="UserController.m",               # can be almost anything .m
-            precomputed_file=precomputed_filename,
-            Dt=test_Dt
-        )
-    elif method == "simulink":
+    base_dir = "test_files/test_controllers"
 
-        ControlInstance = PyControl(
-            control_directory="test_files/test_controllers/simulink/",
-            control_file="simulink_test_controller.slx",    # ← determines simulink method
-            precomputed_file=precomputed_filename,   # optional
-            Dt=test_Dt
-        )
+    dir_map = {
+        "python":        os.path.join(base_dir, "python"),
+        "matlab":        os.path.join(base_dir, "matlab"),
+        "simulink":      os.path.join(base_dir, "simulink"),
+        "simulink_fmu":  os.path.join(base_dir, "simulink_fmu"),
+    }
+    file_map = {
+        "python":        "python_test_controller.py",
+        "matlab":        "UserController.m",
+        "simulink":      "simulink_test_controller.slx",
+        "simulink_fmu":  "simulink_test_controller.fmu",
+    }
 
-    elif method == "simulink_fmu":
-
-        ControlInstance = PyControl(
-            control_directory="test_files/test_controllers/simulink_fmu/",
-            control_file="simulink_test_controller.fmu",    # ← determines simulink method
-            precomputed_file=precomputed_filename,
-            Dt=test_Dt
-        )
+    ControlInstance = PyControl(
+        control_directory = dir_map[method],
+        control_file      = file_map[method],
+        precomputed_file  = precomputed_filename,
+        Dt                = test_Dt,
+    )
 
     ControlInstance.PyControl_DoControllerStep(test_instantaneous_state, Dt=test_Dt)
