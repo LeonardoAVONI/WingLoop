@@ -14,68 +14,230 @@ Last modified: 29/05/2025
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-from WingLoop_Library.PyControl_Text2Python import extract_states_vector
+#from WingLoop_Library.PyControl_Text2Python import extract_states_vector
 from scipy.integrate import trapezoid
 import matlab.engine
 import fmpy
-import os
 import shutil
 from fmpy import read_model_description, extract, instantiate_fmu
+import sys
+from importlib import import_module
+import scipy.io
 
+import warnings
 
 class PyControl:
-    
     """
     Control class, containing the various control laws and history tracking of the variables used in Python
     """
-    def __init__(self,control_directory,startup_file,control_file):
-        
+    def __init__(
+        self,
+        control_directory: str,
+        startup_file: str,
+        control_file: str,
+        precomputed_file: str | None = None,
+        save_precomputed_after_compute: bool = False,
+        library_path: str | None = None,          # ← NEW: optional path to WingLoop_Library or similar
+    ):
+        """
+        Args:
+            control_directory:      Folder containing startup_file, control_file, precomputed_file
+                                    (recommended: absolute path or relative to cwd)
+            startup_file:           Name of startup script (e.g. 'startup.m', 'compute_gains.py')
+            control_file:           Main controller file (determines method): .m / .py / .slx / .fmu
+            precomputed_file:       Optional name of precomputed data file (relative to control_directory)
+            save_precomputed_after_compute:
+                                    If True and precomputed_file=None, auto-save after computation
+            library_path:           Optional path to additional MATLAB/Python library folder
+                                    (e.g. WingLoop_Library containing functions/FMUs)
+        """
+        # Normalize and make control_directory absolute → safer
+        self.control_directory = os.path.abspath(os.path.normpath(control_directory))
+        if not os.path.isdir(self.control_directory):
+            raise NotADirectoryError(f"control_directory does not exist or is not a folder: {self.control_directory}")
 
-        self.x_state_trimmed = extract_states_vector("initial_state")
-        self.trimmed_inputs = self.x_state_trimmed[-6:]
-        
-        #self.K_x = np.load('K_x.npy')
-        #self.W_T_M = np.load('W_T_M.npy')
-        
-        #self.q_state_trimmed = self.W_T_M@self.x_state_trimmed #trimmed modal state
-        #print(self.q_state_trimmed)
-        # with u = -K @ (q - q_trim) + u_trim
-        # with K either K_r_from_full or K_r_from_reduced
-        # q = W_T_M@x
+        self.startup_file = startup_file
+        self.control_file = control_file
+        self.precomputed_file = precomputed_file
+        self.save_precomputed_after_compute = save_precomputed_after_compute
+
+        # Full paths (relative → absolute resolution)
+        self.startup_path = os.path.join(self.control_directory, startup_file)
+        self.control_path = os.path.join(self.control_directory, control_file)
+
+        if not os.path.isfile(self.startup_path):
+            raise FileNotFoundError(f"Startup file not found: {self.startup_path}")
+        if not os.path.isfile(self.control_path):
+            raise FileNotFoundError(f"Control file not found: {self.control_path}")
+
+        if precomputed_file is not None:
+            self.precomputed_path = os.path.join(self.control_directory, precomputed_file)
+            if not os.path.isfile(self.precomputed_path):
+                warnings.warn(
+                    f"Precomputed file specified but not found → will compute instead.\n"
+                    f"Missing: {self.precomputed_path}",
+                    UserWarning
+                )
+                self.precomputed_path = None
+        else:
+            self.precomputed_path = None
+
+        # Library / toolbox path (used for MATLAB addpath and FMU location)
+        if library_path is None:
+            # Fallback: try to guess common locations (customize this!)
+            possible = [
+                os.path.expanduser("~/Bureau/01 Github/02_WingLoop/WingLoop_Library"),
+                os.path.expanduser("~/GitHub/02_WingLoop/WingLoop_Library"),
+                os.getcwd(),  # last resort
+            ]
+            for p in possible:
+                if os.path.isdir(p):
+                    library_path = p
+                    break
+            else:
+                library_path = self.control_directory  # fallback
+        self.library_path = os.path.abspath(library_path)
+
+        # Determine method
+        ext = os.path.splitext(control_file)[1].lower()
+        method_map = {
+            '.py':  "python",
+            '.m':   "matlab",
+            '.slx': "simulink",
+            '.fmu': "simulink_fmu",
+        }
+        if ext not in method_map:
+            raise ValueError(f"Unsupported control_file extension: {ext} (file: {control_file})")
+        self.method = method_map[ext]
 
         self.eng = None
-        self.method = "simulink"
         self.Dt = 0.01
         self.time = 0.0
-        
-        #path = "/home/leonardo-avoni/Desktop/01_GitHub/02_WingLoop/WingLoop_Library"
-        path = "/home/daep/l.avoni/Bureau/01 Github/02_WingLoop/WingLoop_Library"
-        fmupath = os.path.join(path, "UAV_Controller.fmu")
+        self.fmu_controller = None
 
+        # MATLAB engine setup
         if self.method in ["matlab", "simulink"]:
-            self.eng = matlab.engine.start_matlab("-nodesktop -nosplash")
+            import matlab.engine
+            self.eng = matlab.engine.start_matlab("-nodesktop -nosplash -nojvm")  # -nojvm often faster
 
-        if self.method == "matlab":
-            self.eng.addpath(path, nargout=0)
-            self.eng.workspace['Dt'] = 0.01  # optional
-        elif self.method == "simulink":
-            # self.eng.set_param('UAV_Controller', 'SimulationCommand', 'step', nargout=0)
-            self.eng.addpath(path, nargout=0)
-            self.eng.load_system('UAV_Controller')
-            self.eng.set_param('UAV_Controller', 'ReturnWorkspaceOutputs', 'on', nargout=0)
-            #self.eng.set_param('UAV_Controller', 'SimulationCommand', 'start', nargout=0)
-            #self.eng.set_param('UAV_Controller', 'SimulationCommand', 'pause', nargout=0)
-            self.eng.set_param('UAV_Controller', 'SignalLogging', 'on', nargout=0)
+            # 1. Change directory → most reliable
+            self.eng.cd(self.control_directory, nargout=0)
 
+            # 2. Add library path (utilities, functions, etc.)
+            self.eng.addpath(self.library_path, nargout=0)
+
+            # Optional: add genpath() if you have many subfolders
+            # self.eng.addpath(self.eng.genpath(self.library_path), nargout=0)
+            
+            
+        # Simulink model name (without .slx)
+        if self.method == "simulink":
+            print("fcwececec TEST")
+            model_name = os.path.splitext(control_file)[0]
+
+            try:
+                self.eng.load_system(model_name, nargout=0)
+                self.eng.set_param(model_name, 'ReturnWorkspaceOutputs', 'on', nargout=0)
+                self.eng.set_param(model_name, 'SignalLogging', 'on', nargout=0)
+            except Exception as e:
+                raise RuntimeError(f"Failed to load/configure Simulink model '{model_name}': {e}")
+
+        # FMU setup
         elif self.method == "simulink_fmu":
+            # FMU is usually in library_path or control_directory
+            possible_fmu_locations = [
+                os.path.join(self.library_path, control_file),
+                os.path.join(self.control_directory, control_file),
+                control_file,  # if absolute
+            ]
+            fmu_path = None
+            for cand in possible_fmu_locations:
+                if os.path.isfile(cand):
+                    fmu_path = cand
+                    break
+            if fmu_path is None:
+                raise FileNotFoundError(f"FMU not found. Tried:\n" + "\n".join(possible_fmu_locations))
+
+            #from .SimulinkFMUController import SimulinkFMUController  # adjust import as needed
             self.fmu_controller = SimulinkFMUController(
-                fmu_path=fmupath,
-                Dt=0.01
+                fmu_path=fmu_path,
+                Dt=self.Dt
             )
+            
+        self.x_state_trimmed = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+
+        # Run setup
+        self.setup()
+
+    def setup(self):
+        """
+        Handles step 1 (compute) or step 2 (load precomputed).
+        Makes variables accessible for step 3 (simulation).
+        """
+        full_startup = os.path.join(self.control_directory, self.startup_file)
+        use_precomputed = self.precomputed_file is not None
+        full_precomputed = os.path.join(self.control_directory, self.precomputed_file) if use_precomputed else None
+
+        if use_precomputed and not os.path.exists(full_precomputed):
+            print(f"Precomputed file {full_precomputed} not found; falling back to computation.")
+            use_precomputed = False
+
+        if use_precomputed:
+            # Load precomputed
+            if self.method == "python":
+                data = np.load(full_precomputed)
+                self.K_x = data['K_x']
+                self.W_T_M = data['W_T_M']
+                #self.q_state_trimmed = data['q_state_trimmed']  # Or recompute if needed: self.W_T_M @ self.x_state_trimmed
+
+            elif self.method in ["matlab", "simulink"]:
+                self.eng.load(full_precomputed)
+
+            elif self.method == "simulink_fmu":
+                # Load from .mat or .npz and set as FMU parameters
+                if full_precomputed.endswith('.mat'):
+                    data = scipy.io.loadmat(full_precomputed)
+                else:
+                    data = np.load(full_precomputed)
+                param_vrs = {v.name: v.valueReference for v in self.fmu_controller.model_description.modelVariables if v.causality == 'parameter'}
+                for key, value in data.items():
+                    if not key.startswith('__') and key in param_vrs:
+                        # Assume scalar/array; adjust for your FMU (e.g., flatten if matrix)
+                        self.fmu_controller.fmu.setReal([param_vrs[key]], value.flatten().tolist())
+
+        else:
+            # Compute using startup_file
+            if self.method == "python" or self.method == "simulink_fmu":  # Python-based computation
+                sys.path.append(self.control_directory)
+                startup_mod_name = os.path.splitext(self.startup_file)[0]
+                startup_mod = import_module(startup_mod_name)
+                data = startup_mod.compute_initial_data(self.x_state_trimmed)  # Assume this function exists in startup_file
+                self.K_x = data['K_x']
+                self.W_T_M = data['W_T_M']
+                #self.q_state_trimmed = data.get('q_state_trimmed', self.W_T_M @ self.x_state_trimmed)
+
+            elif self.method in ["matlab", "simulink"]:
+                self.eng.cd(self.control_directory)
+                # Pass trimmed state to workspace for computation
+                self.eng.workspace['x_state_trimmed'] = matlab.double(self.x_state_trimmed.tolist())
+                self.eng.run(os.path.splitext(self.startup_file)[0])  # Runs the .m script
+
+                # Fetch computed vars if needed (optional; they're in workspace for simulation)
+                # self.K_x = np.array(self.eng.workspace['K_x'])  # If you need them in Python
+
+            if self.save_precomputed_after_compute:
+                # Save computed data for future use (default filename based on method)
+                save_path = os.path.join(self.control_directory, f"precomputed_{self.method}.{'npz' if self.method in ['python', 'simulink_fmu'] else 'mat'}")
+                if self.method == "python" or self.method == "simulink_fmu":
+                    np.savez(save_path, K_x=self.K_x, W_T_M=self.W_T_M)#, q_state_trimmed=self.q_state_trimmed)
+                elif self.method in ["matlab", "simulink"]:
+                    self.eng.save(save_path)
+
+    # Your existing UAV_control_Strategy_LQR and UAV_control_Strategy methods go here (unchanged)
+    # They will use the setup variables appropriately (e.g., self.K_x for python, workspace for matlab/simulink)
 
     
-    
-    
+
     def UAV_control_Strategy_LQR(self,instantaneous_state, Dt):
         """ 
         Made for LQR, for Murua, trimmed
@@ -261,6 +423,7 @@ class PyControl:
         return output
 
 
+
 class SimulinkFMUController:
     def __init__(self, fmu_path, Dt=0.01):
         """
@@ -328,28 +491,43 @@ class SimulinkFMUController:
 
 
 if __name__=="__main__":
-    ControlInstance = PyControl(control_directory = "/test_files/test_controllers",
-                                startup_file,
-                                control_file)
     
-""" 
-I have here the following code. This code describes the PyControl class.
+    method = "simulink"
+    if method == "python":
+        ControlInstance = PyControl(
+            control_directory="test_files/test_controllers/python",
+            startup_file="python_test_startup.py",
+            control_file="python_test_controller.py",               # ← determines python method
+            precomputed_file="precomputed_python.npz",  # optional
+            save_precomputed_after_compute=True
+        )
 
-The idea is that at class startup, Pycontrol would require a directory where the control files would be located, as well as "the name of the control files"
-
-The methods available are:
-    python: if control files are .py files
-    matlab: if control files are .m files
-    simulink: if control files are .slx files
-    simulink_fmu: if control files are .fmu files
-
-The problem I have at the moment is: for control, I need to have "two" steps (regardless of whether I use python, matlab, simulink, r simulink_fmu):
-    step 1: loading what is needed for the controller to use (control matrices, eigenvalues, requirements, weighhts matrices...) and perform some preliminary math to build what will be used by the controller
-    step 2: as an option/alternative to step1, I would need to allow the user to load some pre-computed elements (if for example teh control matrices math was already doe, instead of recomputing them how about we just load them from a known file?)
-    step 3: while the simulation is running timestep after timestep, the current time model state is fed to UAV_control_Strategy, that takes care of computing the controls to apply on the model. Depending on the method, the controller will be either  in matlab simulink or python
-
-I need a way to provide to PyControl all of this. I need a way to make the thing general for Py, m, slx, fmu.
-Take care that I need a way to make the pre-control variables accessible during the time-transient simulation
-
-How can I do it?
-"""
+        
+    elif method == "matlab":
+        ControlInstance = PyControl(
+            control_directory="test_files/test_controllers/matlab/",
+            startup_file="matlab_test_startup.m",
+            control_file="matlab_test_controller.m",               # can be almost anything .m
+            precomputed_file="precomputed.mat",
+        )
+    elif method == "simulink":
+        
+        ControlInstance = PyControl(
+            control_directory="test_files/test_controllers/simulink/",
+            startup_file="simulink_test_startup.m",
+            control_file="simulink_test_controller.slx",    # ← determines simulink method
+            precomputed_file="precomputed.mat",   # optional
+            save_precomputed_after_compute=True
+        )
+    
+    
+    elif method == "simulink_fmu":
+        
+        ControlInstance = PyControl(
+            control_directory="test_files/test_controllers/simulink_fmu/",
+            startup_file="simulink_fmu_test_startup.py",
+            control_file="simulink_test_controller.fmu",    # ← determines simulink method
+            precomputed_file="precomputed.mat",   # optional
+            save_precomputed_after_compute=True
+        )
+    
