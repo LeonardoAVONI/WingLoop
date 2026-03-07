@@ -189,7 +189,6 @@ class PyControl:
         control_directory: str,
         control_file:      str,
         precomputed_file:  str | None = None,
-        library_path:      str | None = None,
         Dt:                float       = 0.01,
         rebuild_fmu:       bool        = False,
     ):
@@ -216,17 +215,6 @@ class PyControl:
                     f"Precomputed file not found → will compute defaults.\nMissing: {p}",
                     UserWarning,
                 )
-
-        # ── library path ───────────────────────────────────────────────
-        if library_path is None:
-            candidates = [
-                os.path.expanduser("~/Desktop/01_GitHub/02_WingLoop/WingLoop_Library"),
-                os.path.expanduser("~/Bureau/01 Github/02_WingLoop/WingLoop_Library"),
-                os.path.expanduser("~/GitHub/02_WingLoop/WingLoop_Library"),
-                os.getcwd(),
-            ]
-            library_path = next((p for p in candidates if os.path.isdir(p)), self.control_directory)
-        self.library_path = os.path.abspath(library_path)
 
         # ── method ─────────────────────────────────────────────────────
         ext = os.path.splitext(control_file)[1].lower()
@@ -256,7 +244,6 @@ class PyControl:
             self.eng = matlab.engine.start_matlab("-nodesktop -nosplash")
             self.eng.cd(self.control_directory, nargout=0)
             self.eng.addpath(self.control_directory, nargout=0)
-            self.eng.addpath(self.library_path, nargout=0)
 
         # ── Simulink model pre-load ────────────────────────────────────
         if self.method == 'simulink':
@@ -588,12 +575,12 @@ if __name__ == "__main__":
     simulink (both)
     fmu works (both)
 
-    Are libraries actually useful???
-
+    prints are actually ok
+    RebuildFMU oly if FMU option is used
     """
 
-    method        = "matlab"   # change to: python | matlab | simulink | simulink_fmu
-    IsPrecomputed = False
+    method        = "simulink_fmu"   # change to: python | matlab | simulink | simulink_fmu
+    IsPrecomputed = True
 
     # rebuild_fmu only relevant for simulink_fmu.
     # Set True to re-export the FMU from the .slx after pushing UserController

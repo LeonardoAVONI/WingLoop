@@ -22,10 +22,8 @@ classdef UserController < handle
 
             if ~isempty(precomputed_file_path) && isfile(precomputed_file_path)
                 obj.loadFromPrecomputed(precomputed_file_path);
-                fprintf('[MATLAB UserController] imported datshit\n');
             else
                 obj.computeInitialData();
-                fprintf('[MATLAB UserController] computed datshit\n');
             end
 
             % Minimal validation / debug print
