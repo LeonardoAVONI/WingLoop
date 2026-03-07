@@ -61,7 +61,6 @@ import matlab.engine
 import fmpy
 from fmpy import read_model_description, extract, instantiate_fmu
 
-
 # ──────────────────────────────────────────────────────────────────────────────
 # FMU helper
 # ──────────────────────────────────────────────────────────────────────────────
@@ -181,6 +180,13 @@ class PyControl:
         Root of WingLoop_Library (used for MATLAB addpath). Auto-detected if None.
     Dt : float
         Default timestep (seconds).
+    rebuild_fmu : bool
+        simulink_fmu only. Re-export the FMU from the matching .slx before running.
+    show_simulink : bool
+        simulink only. If True, opens the Simulink block-diagram window so that
+        Scopes and other sinks display live data during each sim() call.
+        Requires a full MATLAB desktop session (JVM enabled, display available).
+        Has no effect for other methods.
     """
 
     # ------------------------------------------------------------------
@@ -191,6 +197,7 @@ class PyControl:
         precomputed_file:  str | None = None,
         Dt:                float       = 0.01,
         rebuild_fmu:       bool        = False,
+        show_simulink:     bool        = False,
     ):
         # ── paths ──────────────────────────────────────────────────────
         self.control_directory = os.path.abspath(os.path.normpath(control_directory))
@@ -225,14 +232,15 @@ class PyControl:
         self.control_model_name = os.path.splitext(control_file)[0]
 
         # ── state ──────────────────────────────────────────────────────
-        self.Dt          = Dt
-        self.time        = 0.0
-        self.rebuild_fmu = rebuild_fmu
+        self.Dt            = Dt
+        self.time          = 0.0
+        self.rebuild_fmu   = rebuild_fmu
+        self.show_simulink = show_simulink
 
-        self.eng                       = None
-        self.fmu_controller            = None
+        self.eng                        = None
+        self.fmu_controller             = None
         self.python_controller_instance = None
-        self.matlab_controller_instance = None   # MATLAB UserController handle
+        self.matlab_controller_instance = None
 
         # ── MATLAB engine ──────────────────────────────────────────────
         # simulink_fmu only needs the engine when rebuild_fmu=True (to re-export).
@@ -241,7 +249,16 @@ class PyControl:
                        (self.method == 'simulink_fmu' and self.rebuild_fmu)
         if needs_engine:
             print(f"[PyControl] Starting MATLAB engine for method='{self.method}' …")
-            self.eng = matlab.engine.start_matlab("-nodesktop -nosplash")
+            if self.method == 'matlab':
+                # Pure MATLAB: no JVM needed (faster startup, ~3-5 s saved)
+                flags = "-nodesktop -nosplash -nojvm"
+            elif self.show_simulink:
+                # Simulink with visible GUI: needs JVM + desktop for scopes/windows
+                flags = "-nosplash"
+            else:
+                # Simulink headless: suppress desktop, keep JVM (Simulink requires it)
+                flags = "-nodesktop -nosplash"
+            self.eng = matlab.engine.start_matlab(flags)
             self.eng.cd(self.control_directory, nargout=0)
             self.eng.addpath(self.control_directory, nargout=0)
 
@@ -251,6 +268,11 @@ class PyControl:
                 self.eng.load_system(self.control_model_name, nargout=0)
                 self.eng.set_param(self.control_model_name, 'ReturnWorkspaceOutputs', 'on', nargout=0)
                 self.eng.set_param(self.control_model_name, 'SignalLogging',           'on', nargout=0)
+                if self.show_simulink:
+                    # open_system() brings up the block diagram window.
+                    # Scopes and other sinks will display live data as sim() runs.
+                    self.eng.open_system(self.control_model_name, nargout=0)
+                    print(f"[PyControl] Simulink model '{self.control_model_name}' opened graphically.")
             except Exception as exc:
                 raise RuntimeError(
                     f"Failed to load Simulink model '{self.control_model_name}': {exc}"
@@ -314,71 +336,41 @@ class PyControl:
                 )
 
     # ------------------------------------------------------------------
-    def _extract_controller_data(self) -> dict:
-        """
-        Pull the three standard properties out of the MATLAB UserController handle
-        and return them as plain Python / NumPy objects.
-
-        Returns a dict with keys:
-            'workspace_scalar'  : float
-            'workspace_string'  : str
-            'workspace_matrix'  : np.ndarray
-
-        Uses a valid MATLAB variable name (no leading underscore).
-        """
-        # 'uc_handle' — no leading underscore, fully valid in MATLAB
-        self.eng.workspace['uc_handle'] = self.matlab_controller_instance
-
-        scalar = float(self.eng.eval("uc_handle.workspace_scalar", nargout=1))
-        string = str(self.eng.eval("char(uc_handle.workspace_string)", nargout=1))
-        matrix = np.array(self.eng.eval("uc_handle.workspace_matrix", nargout=1))
-
-        return {
-            'workspace_scalar': scalar,
-            'workspace_string': string,
-            'workspace_matrix': matrix,
-        }
-
-    # ------------------------------------------------------------------
     def _push_controller_to_base_workspace(self):
         """
-        Push UserController's workspace properties into MATLAB's *base* workspace
-        via assignin() so Simulink can read them by name during sim().
+        Extract all three UserController properties and push them to MATLAB's
+        base workspace in a single round-trip (one eng.eval call).
 
-        UserController must expose:
-            obj.workspace_scalar  (double)
-            obj.workspace_string  (string / char)
-            obj.workspace_matrix  (double matrix)
+        Previously this required 6 separate Python↔MATLAB IPC calls; now it's 1.
         """
         if self.matlab_controller_instance is None:
             return
 
         try:
-            data = self._extract_controller_data()
-
-            # assignin('base', ...) is the standard way to write to the base
-            # workspace from within a MATLAB function / engine session.
-            # We push uc_handle first so the eval calls have it available.
+            # One eval that does everything: assign uc_handle, push all three
+            # variables to base workspace, then return a lightweight summary struct.
+            self.eng.workspace['uc_handle'] = self.matlab_controller_instance
             self.eng.eval(
-                "assignin('base', 'workspace_scalar', uc_handle.workspace_scalar);",
-                nargout=0,
-            )
-            self.eng.eval(
-                "assignin('base', 'workspace_string', uc_handle.workspace_string);",
-                nargout=0,
-            )
-            self.eng.eval(
+                "assignin('base', 'workspace_scalar', uc_handle.workspace_scalar); "
+                "assignin('base', 'workspace_string', uc_handle.workspace_string); "
                 "assignin('base', 'workspace_matrix', uc_handle.workspace_matrix);",
                 nargout=0,
             )
+
+            # Read back scalar+string for the log in one call (matrix excluded —
+            # a struct containing a matrix is non-scalar and can't be returned).
+            scalar = float(self.eng.eval("uc_handle.workspace_scalar", nargout=1))
+            string = str(self.eng.eval("char(uc_handle.workspace_string)", nargout=1))
+            msize  = tuple(int(x) for x in np.array(
+                self.eng.eval("size(uc_handle.workspace_matrix)", nargout=1)
+            ).flatten())
             print(
                 f"[PyControl] Pushed to MATLAB base workspace:\n"
-                f"   workspace_scalar = {data['workspace_scalar']}\n"
-                f"   workspace_string = {data['workspace_string']}\n"
-                f"   workspace_matrix shape = {data['workspace_matrix'].shape}"
+                f"   workspace_scalar = {scalar}\n"
+                f"   workspace_string = {string}\n"
+                f"   workspace_matrix shape = {msize}"
             )
-            # Store for potential use by FMU
-            self._controller_data = data
+            self._controller_data = {'workspace_scalar': scalar, 'workspace_string': string}
 
         except Exception as exc:
             raise RuntimeError(
@@ -527,26 +519,25 @@ class PyControl:
         # Push SimulationOutput object so we can use eval() to extract fields
         self.eng.workspace['simOut'] = out
 
-        # Extract outputs — try Dataset format first, fall back to Array format
+        # Extract all 6 outputs in one round-trip.
+        # Returns a 1×6 double: [F1 F2 F3 F4 E1 E2]
+        # Try Dataset format (Save format = Dataset, the default) first.
         try:
-            output = {
-                "F1": float(self.eng.eval("simOut.F1.Data(end)", nargout=1)),
-                "F2": float(self.eng.eval("simOut.F2.Data(end)", nargout=1)),
-                "F3": float(self.eng.eval("simOut.F3.Data(end)", nargout=1)),
-                "F4": float(self.eng.eval("simOut.F4.Data(end)", nargout=1)),
-                "E1": float(self.eng.eval("simOut.E1.Data(end)", nargout=1)),
-                "E2": float(self.eng.eval("simOut.E2.Data(end)", nargout=1)),
-            }
+            vals = self.eng.eval(
+                "[simOut.F1.Data(end), simOut.F2.Data(end), simOut.F3.Data(end),"
+                " simOut.F4.Data(end), simOut.E1.Data(end), simOut.E2.Data(end)]",
+                nargout=1,
+            )
         except Exception:
             # Fallback: Save format = Array
-            output = {
-                "F1": float(self.eng.eval("simOut.F1(end)", nargout=1)),
-                "F2": float(self.eng.eval("simOut.F2(end)", nargout=1)),
-                "F3": float(self.eng.eval("simOut.F3(end)", nargout=1)),
-                "F4": float(self.eng.eval("simOut.F4(end)", nargout=1)),
-                "E1": float(self.eng.eval("simOut.E1(end)", nargout=1)),
-                "E2": float(self.eng.eval("simOut.E2(end)", nargout=1)),
-            }
+            vals = self.eng.eval(
+                "[simOut.F1(end), simOut.F2(end), simOut.F3(end),"
+                " simOut.F4(end), simOut.E1(end), simOut.E2(end)]",
+                nargout=1,
+            )
+
+        v = np.array(vals).flatten()
+        output = dict(zip(('F1', 'F2', 'F3', 'F4', 'E1', 'E2'), v.tolist()))
 
         self.time += Dt
         return output
@@ -557,10 +548,15 @@ class PyControl:
         if self.fmu_controller:
             self.fmu_controller.terminate()
         if self.eng:
-            try:
-                self.eng.quit()
-            except Exception:
-                pass
+            if self.show_simulink:
+                # Leave MATLAB/Simulink window open for inspection.
+                # The engine process will stay alive until the user closes MATLAB.
+                print("[PyControl] Simulink window left open (show_simulink=True). Close MATLAB manually when done.")
+            else:
+                try:
+                    self.eng.quit()
+                except Exception:
+                    pass
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -576,18 +572,14 @@ if __name__ == "__main__":
     fmu works (both)
 
     prints are actually ok
-    RebuildFMU oly if FMU option is used
+    RebuildFMU oly if FMU option is used (yes)
+    graphics working? (yes)
     """
 
-    method        = "simulink_fmu"   # change to: python | matlab | simulink | simulink_fmu
+    method        = "simulink"   # change to: python | matlab | simulink | simulink_fmu
     IsPrecomputed = True
-
-    # rebuild_fmu only relevant for simulink_fmu.
-    # Set True to re-export the FMU from the .slx after pushing UserController
-    # workspace values — required if the FMU was exported before you changed
-    # workspace_scalar / workspace_matrix, or to verify precomputed vs computed.
-    # Set False (default) to use the .fmu binary as-is.
-    RebuildFMU = True
+    RebuildFMU    = False   # simulink_fmu only
+    ShowSimulink  = True   # simulink only: open block-diagram + scopes graphically
 
     test_instantaneous_state = ((np.arange(1945) + 1) * 10).astype(float)
     test_Dt = 0.01
@@ -621,6 +613,7 @@ if __name__ == "__main__":
         precomputed_file  = precomputed_filename,
         Dt                = test_Dt,
         rebuild_fmu       = RebuildFMU,
+        show_simulink     = ShowSimulink,
     )
 
     ControlInstance.PyControl_DoControllerStep(test_instantaneous_state, Dt=test_Dt)
