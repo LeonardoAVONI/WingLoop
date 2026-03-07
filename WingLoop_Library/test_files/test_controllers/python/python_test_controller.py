@@ -56,8 +56,8 @@ class UserController:
         Can use self.workspace_xxx attributes freely.
         """
         output = {}
-        output["F1"] = instantaneous_state[0]
-        output["F2"] = instantaneous_state[1]
+        output["F1"] = instantaneous_state[0]+self.workspace_scalar_py
+        output["F2"] = instantaneous_state[1]+self.workspace_scalar_py
         output["F3"] = instantaneous_state[2]
         output["F4"] = instantaneous_state[3]
         output["E1"] = instantaneous_state[4]

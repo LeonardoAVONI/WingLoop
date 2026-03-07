@@ -205,7 +205,6 @@ class PyControl:
         if not os.path.isfile(self.control_path):
             raise FileNotFoundError(f"Control file not found: {self.control_path}")
 
-
         self.precomputed_path = None
         if precomputed_file:
             p = os.path.join(self.control_directory, precomputed_file)
@@ -218,7 +217,7 @@ class PyControl:
                     UserWarning,
                 )
 
-        # ── library path ─────────────────────────────────────────────── DO WE NEED IT? TODO
+        # ── library path ───────────────────────────────────────────────
         if library_path is None:
             candidates = [
                 os.path.expanduser("~/Desktop/01_GitHub/02_WingLoop/WingLoop_Library"),
@@ -247,8 +246,12 @@ class PyControl:
         self.python_controller_instance = None
         self.matlab_controller_instance = None   # MATLAB UserController handle
 
-        # ── MATLAB engine (shared by matlab / simulink / simulink_fmu) ─
-        if self.method in ('matlab', 'simulink', 'simulink_fmu'):
+        # ── MATLAB engine ──────────────────────────────────────────────
+        # simulink_fmu only needs the engine when rebuild_fmu=True (to re-export).
+        # Without rebuild, the FMU runs standalone — no MATLAB required.
+        needs_engine = self.method in ('matlab', 'simulink') or \
+                       (self.method == 'simulink_fmu' and self.rebuild_fmu)
+        if needs_engine:
             print(f"[PyControl] Starting MATLAB engine for method='{self.method}' …")
             self.eng = matlab.engine.start_matlab("-nodesktop -nosplash")
             self.eng.cd(self.control_directory, nargout=0)
@@ -299,27 +302,29 @@ class PyControl:
                 precomputed_file_path = self.precomputed_path or "",
             )
 
-        elif self.method in ('matlab', 'simulink', 'simulink_fmu'):
+        elif self.method in ('matlab', 'simulink'):
             # Instantiate MATLAB UserController (handles precomputed or default)
-
             precomp_arg = self.precomputed_path if self.precomputed_path else ""
             print(f"[PyControl] Instantiating MATLAB UserController …")
-
-            print("File: " ,self.control_path)
-            print("Precomputed argument: ",precomp_arg)
-            print("Dt: ",self.Dt)
-            print("Rebuild fmu:", self.rebuild_fmu)
             self.matlab_controller_instance = self.eng.UserController(precomp_arg)
-
-            # ── Push workspace variables to MATLAB base workspace ──────
-            # This is what makes them visible to Simulink's model workspace
-            # or MATLAB functions called during simulation.
-            # We use assignin('base', ...) which is the standard MATLAB way.
             self._push_controller_to_base_workspace()
 
-            # ── For FMU: also attempt to set matching FMU parameters ───
-            if self.method == 'simulink_fmu':
-                self._push_controller_to_fmu()
+        elif self.method == 'simulink_fmu':
+            if self.rebuild_fmu:
+                # Need MATLAB to re-export: instantiate UserController, push to
+                # base workspace so the .slx picks up the values on export.
+                precomp_arg = self.precomputed_path if self.precomputed_path else ""
+                print(f"[PyControl] Instantiating MATLAB UserController for FMU rebuild …")
+                self.matlab_controller_instance = self.eng.UserController(precomp_arg)
+                self._push_controller_to_base_workspace()
+                self._push_controller_to_fmu()   # triggers re-export + reload
+            else:
+                # FMU runs standalone — skip MATLAB entirely, use FMU as-is.
+                print(
+                    "[PyControl] simulink_fmu: using FMU as-is (rebuild_fmu=False).\n"
+                    "   Workspace variables are baked into the FMU from its last export.\n"
+                    "   Set rebuild_fmu=True to re-export with current UserController values."
+                )
 
     # ------------------------------------------------------------------
     def _extract_controller_data(self) -> dict:
@@ -398,49 +403,13 @@ class PyControl:
     # ------------------------------------------------------------------
     def _push_controller_to_fmu(self):
         """
-        Handle UserController data for simulink_fmu.
+        Re-export the FMU from the matching .slx, with current base workspace
+        values baked in, then reload self.fmu_controller from the fresh binary.
 
-        If self.rebuild_fmu is True:
-            1. Push workspace variables to MATLAB base workspace.
-            2. Re-export the FMU from the matching .slx file using exportToFMU2CS.
-               The .slx must have the same stem as the .fmu and live in the same
-               directory (e.g. simulink_test_controller.slx alongside
-               simulink_test_controller.fmu).
-            3. Replace self.fmu_controller with a new instance using the fresh .fmu.
-
-        If self.rebuild_fmu is False (default):
-            Print a diagnostic explaining that the FMU uses baked-in values and
-            how to enable rebuilding.
+        Only called when rebuild_fmu=True. The .slx must have the same stem as
+        the .fmu and live in the same directory.
         """
-        if self.fmu_controller is None:
-            return
-
-        # Get data (already extracted during _push_controller_to_base_workspace)
-        data = getattr(self, '_controller_data', None)
-        if data is None:
-            if self.matlab_controller_instance is not None:
-                try:
-                    data = self._extract_controller_data()
-                    self._controller_data = data
-                except Exception as exc:
-                    warnings.warn(f"[PyControl] Could not extract UserController data: {exc}", UserWarning)
-                    return
-            else:
-                return
-
-        if not self.rebuild_fmu:
-            # ── Informational only ──────────────────────────────────────
-            print(
-                "[PyControl] simulink_fmu: using FMU as-is (rebuild_fmu=False).\n"
-                f"   The FMU was exported with fixed start values — UserController\n"
-                f"   data (scalar={data['workspace_scalar']}, "
-                f"string='{data['workspace_string']}') is NOT injected.\n"
-                "   Set rebuild_fmu=True to re-export the FMU with the current values."
-            )
-            return
-
-        # ── rebuild_fmu=True: re-export then reload ─────────────────────
-        slx_name = self.control_model_name   # e.g. 'simulink_test_controller'
+        slx_name = self.control_model_name
         slx_path = os.path.join(self.control_directory, slx_name + '.slx')
         if not os.path.isfile(slx_path):
             raise FileNotFoundError(
@@ -454,22 +423,22 @@ class PyControl:
         self.fmu_controller.terminate()
         self.fmu_controller = None
 
-        # 2. Push workspace vars to base workspace (already done, but ensure uc_handle is set)
-        #    _push_controller_to_base_workspace() was called earlier; values are in base ws.
-
-        # 3. Load the .slx model into the engine
+        # 2. Load the .slx (no-op if already loaded)
         try:
             self.eng.load_system(slx_name, nargout=0)
         except Exception:
-            pass  # already loaded is fine
+            pass
 
-        # 4. Re-export to FMU (overwrites the existing .fmu)
-        #    exportToFMU2CS(modelName, 'CoSimulation', SaveDirectory, dirPath)
-        fmu_out_dir = self.control_directory
+        # 3. Re-export to FMU (overwrites the existing .fmu).
+        #    R2025b changed the API: 'CoSimulation' is now 'FMUType','CoSimulation'
+        #    and FMI version must be specified explicitly as 'FMIVersion','2.0'.
+        fmu_out_dir = self.control_directory.replace('\\', '/')
         try:
             self.eng.eval(
-                f"exportToFMU2CS('{slx_name}', 'CoSimulation', "
-                f"'SaveDirectory', '{fmu_out_dir.replace(chr(92), '/')}');",
+                f"exportToFMU2CS('{slx_name}', "
+                f"'FMUType', 'CoSimulation', "
+                f"'FMIVersion', '2.0', "
+                f"'SaveDirectory', '{fmu_out_dir}');",
                 nargout=0,
             )
         except Exception as exc:
@@ -478,14 +447,13 @@ class PyControl:
                 f"   Make sure Simulink Coder and the FMI Kit are licensed and on the path."
             ) from exc
 
-        # 5. The exported .fmu lands in fmu_out_dir with the model name
-        new_fmu_path = os.path.join(fmu_out_dir, slx_name + '.fmu')
+        # 4. Confirm output exists then reload
+        new_fmu_path = os.path.join(self.control_directory, slx_name + '.fmu')
         if not os.path.isfile(new_fmu_path):
             raise FileNotFoundError(
                 f"[PyControl] exportToFMU2CS ran but expected output not found: {new_fmu_path}"
             )
 
-        # 6. Reload FMU controller from the fresh .fmu
         self.fmu_controller = SimulinkFMUController(fmu_path=new_fmu_path, Dt=self.Dt)
         print(f"[PyControl] FMU rebuilt and reloaded from: {new_fmu_path}")
 
@@ -614,19 +582,17 @@ class PyControl:
 
 if __name__ == "__main__":
 
+    """ 
+    matlab (both)
+    python (both)
+    simulink (both)
+    fmu works (both)
 
-    """  
-    At the moment, the library thing is still on
-    For simulink, just one folder is used instead of the simulink_fmu
-       
+    Are libraries actually useful???
 
-    simulink works (import and compute)
-    python workss (both)
-    matlab works (both)
-    simulik_fmu
     """
 
-    method        = "simulik_fmu"   # change to: python | matlab | simulink | simulink_fmu
+    method        = "matlab"   # change to: python | matlab | simulink | simulink_fmu
     IsPrecomputed = False
 
     # rebuild_fmu only relevant for simulink_fmu.
@@ -661,7 +627,6 @@ if __name__ == "__main__":
         "simulink":      "simulink_test_controller.slx",
         "simulink_fmu":  "simulink_test_controller.fmu",
     }
-
 
     ControlInstance = PyControl(
         control_directory = dir_map[method],
