@@ -1,12 +1,6 @@
 """
 ====================================================================================
-Control_Library, Package Version
-
-Author: Leonardo AVONI
-Date: 08/11/2024
-Email: avonileonardo@gmail.com
-
-Last modified: 06/03/2026
+here we would be trying to make one function per input tye; idk seems sus
 
 ====================================================================================
 
@@ -50,6 +44,7 @@ simulink_fmu (.fmu):
 ====================================================================================
 """
 
+
 import numpy as np
 import os
 import shutil
@@ -65,6 +60,10 @@ from fmpy import read_model_description, extract, instantiate_fmu
 # ──────────────────────────────────────────────────────────────────────────────
 # FMU helper
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+
+ 
 
 class SimulinkFMUController:
     """
@@ -184,15 +183,13 @@ class PyControl:
     """
 
     # ------------------------------------------------------------------
-    def __init__(
-        self,
-        control_directory: str,
-        control_file:      str,
-        precomputed_file:  str | None = None,
-        library_path:      str | None = None,
-        Dt:                float       = 0.01,
-        rebuild_fmu:       bool        = False,
-    ):
+    def __init__():
+        pass
+
+    def initiate_python_control(self, Dt : float,
+                                     control_directory: str, 
+                                     control_file:      str, 
+                                     precomputed_file:  str | None = None):
         # ── paths ──────────────────────────────────────────────────────
         self.control_directory = os.path.abspath(os.path.normpath(control_directory))
         if not os.path.isdir(self.control_directory):
@@ -205,7 +202,6 @@ class PyControl:
         if not os.path.isfile(self.control_path):
             raise FileNotFoundError(f"Control file not found: {self.control_path}")
 
-
         self.precomputed_path = None
         if precomputed_file:
             p = os.path.join(self.control_directory, precomputed_file)
@@ -217,17 +213,6 @@ class PyControl:
                     f"Precomputed file not found → will compute defaults.\nMissing: {p}",
                     UserWarning,
                 )
-
-        # ── library path ─────────────────────────────────────────────── DO WE NEED IT? TODO
-        if library_path is None:
-            candidates = [
-                os.path.expanduser("~/Desktop/01_GitHub/02_WingLoop/WingLoop_Library"),
-                os.path.expanduser("~/Bureau/01 Github/02_WingLoop/WingLoop_Library"),
-                os.path.expanduser("~/GitHub/02_WingLoop/WingLoop_Library"),
-                os.getcwd(),
-            ]
-            library_path = next((p for p in candidates if os.path.isdir(p)), self.control_directory)
-        self.library_path = os.path.abspath(library_path)
 
         # ── method ─────────────────────────────────────────────────────
         ext = os.path.splitext(control_file)[1].lower()
@@ -246,6 +231,182 @@ class PyControl:
         self.fmu_controller            = None
         self.python_controller_instance = None
         self.matlab_controller_instance = None   # MATLAB UserController handle
+
+
+
+
+                
+    
+    def initiate_matlab_control(self, Dt : float,
+                                     control_directory: str, 
+                                     control_file:      str, 
+                                     precomputed_file:  str | None = None):
+        # ── paths ──────────────────────────────────────────────────────
+        self.control_directory = os.path.abspath(os.path.normpath(control_directory))
+        if not os.path.isdir(self.control_directory):
+            raise NotADirectoryError(
+                f"control_directory does not exist: {self.control_directory}"
+            )
+
+        self.control_file = control_file
+        self.control_path = os.path.join(self.control_directory, control_file)
+        if not os.path.isfile(self.control_path):
+            raise FileNotFoundError(f"Control file not found: {self.control_path}")
+
+        self.precomputed_path = None
+        if precomputed_file:
+            p = os.path.join(self.control_directory, precomputed_file)
+            if os.path.isfile(p):
+                self.precomputed_path = p
+                print(f"[PyControl] Precomputed file found: {p}")
+            else:
+                warnings.warn(
+                    f"Precomputed file not found → will compute defaults.\nMissing: {p}",
+                    UserWarning,
+                )
+
+        # ── method ─────────────────────────────────────────────────────
+        ext = os.path.splitext(control_file)[1].lower()
+        method_map = {'.py': 'python', '.m': 'matlab', '.slx': 'simulink', '.fmu': 'simulink_fmu'}
+        if ext not in method_map:
+            raise ValueError(f"Unsupported extension '{ext}' in '{control_file}'")
+        self.method = method_map[ext]
+        self.control_model_name = os.path.splitext(control_file)[0]
+
+        # ── state ──────────────────────────────────────────────────────
+        self.Dt          = Dt
+        self.time        = 0.0
+        self.rebuild_fmu = rebuild_fmu
+
+        self.eng                       = None
+        self.fmu_controller            = None
+        self.python_controller_instance = None
+        self.matlab_controller_instance = None   # MATLAB UserController handle
+
+
+
+
+
+
+                
+    def initiate_simulink_control(self, Dt : float,
+                                     control_directory: str, 
+                                     control_file:      str, 
+                                     precomputed_file:  str | None = None):
+        # ── paths ──────────────────────────────────────────────────────
+        self.control_directory = os.path.abspath(os.path.normpath(control_directory))
+        if not os.path.isdir(self.control_directory):
+            raise NotADirectoryError(
+                f"control_directory does not exist: {self.control_directory}"
+            )
+
+        self.control_file = control_file
+        self.control_path = os.path.join(self.control_directory, control_file)
+        if not os.path.isfile(self.control_path):
+            raise FileNotFoundError(f"Control file not found: {self.control_path}")
+
+        self.precomputed_path = None
+        if precomputed_file:
+            p = os.path.join(self.control_directory, precomputed_file)
+            if os.path.isfile(p):
+                self.precomputed_path = p
+                print(f"[PyControl] Precomputed file found: {p}")
+            else:
+                warnings.warn(
+                    f"Precomputed file not found → will compute defaults.\nMissing: {p}",
+                    UserWarning,
+                )
+
+        # ── method ─────────────────────────────────────────────────────
+        ext = os.path.splitext(control_file)[1].lower()
+        method_map = {'.py': 'python', '.m': 'matlab', '.slx': 'simulink', '.fmu': 'simulink_fmu'}
+        if ext not in method_map:
+            raise ValueError(f"Unsupported extension '{ext}' in '{control_file}'")
+        self.method = method_map[ext]
+        self.control_model_name = os.path.splitext(control_file)[0]
+
+        # ── state ──────────────────────────────────────────────────────
+        self.Dt          = Dt
+        self.time        = 0.0
+        self.rebuild_fmu = rebuild_fmu
+
+        self.eng                       = None
+        self.fmu_controller            = None
+        self.python_controller_instance = None
+        self.matlab_controller_instance = None   # MATLAB UserController handle
+
+
+
+
+
+    def initiate_simulinkfmu_control(self, Dt : float,
+                                     control_directory: str, 
+                                     control_file:      str, 
+                                     precomputed_file:  str | None = None): #rebuild_fmu:       bool        = False,
+        # ── paths ──────────────────────────────────────────────────────
+        self.control_directory = os.path.abspath(os.path.normpath(control_directory))
+        if not os.path.isdir(self.control_directory):
+            raise NotADirectoryError(
+                f"control_directory does not exist: {self.control_directory}"
+            )
+
+        self.control_file = control_file
+        self.control_path = os.path.join(self.control_directory, control_file)
+        if not os.path.isfile(self.control_path):
+            raise FileNotFoundError(f"Control file not found: {self.control_path}")
+
+        self.precomputed_path = None
+        if precomputed_file:
+            p = os.path.join(self.control_directory, precomputed_file)
+            if os.path.isfile(p):
+                self.precomputed_path = p
+                print(f"[PyControl] Precomputed file found: {p}")
+            else:
+                warnings.warn(
+                    f"Precomputed file not found → will compute defaults.\nMissing: {p}",
+                    UserWarning,
+                )
+
+        # ── method ─────────────────────────────────────────────────────
+        ext = os.path.splitext(control_file)[1].lower()
+        method_map = {'.py': 'python', '.m': 'matlab', '.slx': 'simulink', '.fmu': 'simulink_fmu'}
+        if ext not in method_map:
+            raise ValueError(f"Unsupported extension '{ext}' in '{control_file}'")
+        self.method = method_map[ext]
+        self.control_model_name = os.path.splitext(control_file)[0]
+
+        # ── state ──────────────────────────────────────────────────────
+        self.Dt          = Dt
+        self.time        = 0.0
+        self.rebuild_fmu = rebuild_fmu
+
+        self.eng                       = None
+        self.fmu_controller            = None
+        self.python_controller_instance = None
+        self.matlab_controller_instance = None   # MATLAB UserController handle
+
+
+
+
+                
+
+        # ── library path ───────────────────────────────────────────────
+        #if library_path is None:
+        #    candidates = [
+        #        os.path.expanduser("~/Desktop/01_GitHub/02_WingLoop/WingLoop_Library"),
+        #        os.path.expanduser("~/Bureau/01 Github/02_WingLoop/WingLoop_Library"),
+        #        os.path.expanduser("~/GitHub/02_WingLoop/WingLoop_Library"),
+        #        os.getcwd(),
+        #    ]
+        #    library_path = next((p for p in candidates if os.path.isdir(p)), self.control_directory)
+        #self.library_path = os.path.abspath(library_path)
+
+
+
+
+
+
+
 
         # ── MATLAB engine (shared by matlab / simulink / simulink_fmu) ─
         if self.method in ('matlab', 'simulink', 'simulink_fmu'):
@@ -301,14 +462,8 @@ class PyControl:
 
         elif self.method in ('matlab', 'simulink', 'simulink_fmu'):
             # Instantiate MATLAB UserController (handles precomputed or default)
-
             precomp_arg = self.precomputed_path if self.precomputed_path else ""
             print(f"[PyControl] Instantiating MATLAB UserController …")
-
-            print("File: " ,self.control_path)
-            print("Precomputed argument: ",precomp_arg)
-            print("Dt: ",self.Dt)
-            print("Rebuild fmu:", self.rebuild_fmu)
             self.matlab_controller_instance = self.eng.UserController(precomp_arg)
 
             # ── Push workspace variables to MATLAB base workspace ──────
@@ -614,27 +769,15 @@ class PyControl:
 
 if __name__ == "__main__":
 
-
-    """  
-    At the moment, the library thing is still on
-    For simulink, just one folder is used instead of the simulink_fmu
-       
-
-    simulink works (import and compute)
-    python workss (both)
-    matlab works (both)
-    simulik_fmu
-    """
-
-    method        = "simulik_fmu"   # change to: python | matlab | simulink | simulink_fmu
-    IsPrecomputed = False
+    method        = "simulink"   # change to: python | matlab | simulink | simulink_fmu
+    IsPrecomputed = True
 
     # rebuild_fmu only relevant for simulink_fmu.
     # Set True to re-export the FMU from the .slx after pushing UserController
     # workspace values — required if the FMU was exported before you changed
     # workspace_scalar / workspace_matrix, or to verify precomputed vs computed.
     # Set False (default) to use the .fmu binary as-is.
-    RebuildFMU = True
+    RebuildFMU = False
 
     test_instantaneous_state = ((np.arange(1945) + 1) * 10).astype(float)
     test_Dt = 0.01
@@ -653,7 +796,7 @@ if __name__ == "__main__":
         "python":        os.path.join(base_dir, "python"),
         "matlab":        os.path.join(base_dir, "matlab"),
         "simulink":      os.path.join(base_dir, "simulink"),
-        "simulink_fmu":  os.path.join(base_dir, "simulink"),
+        "simulink_fmu":  os.path.join(base_dir, "simulink_fmu"),
     }
     file_map = {
         "python":        "python_test_controller.py",
@@ -661,7 +804,6 @@ if __name__ == "__main__":
         "simulink":      "simulink_test_controller.slx",
         "simulink_fmu":  "simulink_test_controller.fmu",
     }
-
 
     ControlInstance = PyControl(
         control_directory = dir_map[method],
