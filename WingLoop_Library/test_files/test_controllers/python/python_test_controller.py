@@ -21,6 +21,7 @@ class UserController:
             self._load_precomputed(precomputed_file_path)
         else:
             self._compute_from_startup()
+        self.simulationtime = 0.0
 
         print("[UserController] Initialized with following values:")
         print("     self.workspace_scalar_py:",self.workspace_scalar_py)
@@ -55,6 +56,7 @@ class UserController:
         Main controller step – user implements the logic here.
         Can use self.workspace_xxx attributes freely.
         """
+        self.simulationtime += Dt
         output = {}
         output["F1"] = instantaneous_state[0]+self.workspace_scalar_py
         output["F2"] = instantaneous_state[1]+self.workspace_scalar_py
@@ -62,5 +64,6 @@ class UserController:
         output["F4"] = instantaneous_state[3]
         output["E1"] = instantaneous_state[4]
         output["E2"] = instantaneous_state[5]
+        output["E15"] = self.simulationtime
 
         return output

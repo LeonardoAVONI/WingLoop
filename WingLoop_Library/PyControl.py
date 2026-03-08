@@ -96,7 +96,7 @@ class SimulinkFMUController:
         self._n_inputs     = len(input_vars)
 
         # Cache output VRs
-        output_names = ['F1', 'F2', 'F3', 'F4', 'E1', 'E2']
+        output_names = ['F1', 'F2', 'F3', 'F4', 'E1', 'E2','E15']
         self._output_vrs = [
             next(
                 (v.valueReference for v in self.model_description.modelVariables if v.name == n),
@@ -466,7 +466,7 @@ class PyControl:
                 np.array(instantaneous_state, dtype=np.float64).flatten().tolist()
             )
             out_ml = self.eng.feval('step', self.matlab_controller_instance, state_ml, Dt, nargout=1)
-            output = {k: float(out_ml[k]) for k in ('F1', 'F2', 'F3', 'F4', 'E1', 'E2')}
+            output = {k: float(out_ml[k]) for k in ('F1', 'F2', 'F3', 'F4', 'E1', 'E2','E15')}
 
         # ── Simulink FMU ───────────────────────────────────────────────
         elif self.method == 'simulink_fmu':
@@ -479,7 +479,6 @@ class PyControl:
         else:
             raise ValueError(f"Unknown method: {self.method}")
 
-        print(output)
         return output
 
     # ------------------------------------------------------------------
@@ -525,19 +524,19 @@ class PyControl:
         try:
             vals = self.eng.eval(
                 "[simOut.F1.Data(end), simOut.F2.Data(end), simOut.F3.Data(end),"
-                " simOut.F4.Data(end), simOut.E1.Data(end), simOut.E2.Data(end)]",
+                " simOut.F4.Data(end), simOut.E1.Data(end), simOut.E2.Data(end),simOut.E15.Data(end)]",
                 nargout=1,
             )
         except Exception:
             # Fallback: Save format = Array
             vals = self.eng.eval(
                 "[simOut.F1(end), simOut.F2(end), simOut.F3(end),"
-                " simOut.F4(end), simOut.E1(end), simOut.E2(end)]",
+                " simOut.F4(end), simOut.E1(end), simOut.E2(end),simOut.E15(end)]",
                 nargout=1,
             )
 
         v = np.array(vals).flatten()
-        output = dict(zip(('F1', 'F2', 'F3', 'F4', 'E1', 'E2'), v.tolist()))
+        output = dict(zip(('F1', 'F2', 'F3', 'F4', 'E1', 'E2','E15'), v.tolist()))
 
         self.time += Dt
         return output
@@ -579,7 +578,7 @@ if __name__ == "__main__":
     method        = "simulink"   # change to: python | matlab | simulink | simulink_fmu
     IsPrecomputed = True
     RebuildFMU    = False   # simulink_fmu only
-    ShowSimulink  = True   # simulink only: open block-diagram + scopes graphically
+    ShowSimulink  = False   # simulink only: open block-diagram + scopes graphically
 
     test_instantaneous_state = ((np.arange(1945) + 1) * 10).astype(float)
     test_Dt = 0.01
@@ -616,4 +615,6 @@ if __name__ == "__main__":
         show_simulink     = ShowSimulink,
     )
 
-    ControlInstance.PyControl_DoControllerStep(test_instantaneous_state, Dt=test_Dt)
+    for i in range(50):
+        output = ControlInstance.PyControl_DoControllerStep(test_instantaneous_state, Dt=test_Dt)
+        print(output)

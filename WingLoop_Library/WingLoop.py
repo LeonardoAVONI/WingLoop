@@ -51,20 +51,15 @@ How To Install
 ====================================================================================
 """
 
-import csv
-import subprocess
 import numpy as np
 import sys
 import os
 import time
-#import matlab.engine #executing this line steals a bit of time; it is needed if we want to bridge it with matlab
-import threading
-from queue import Queue, Empty
-from ASWING_Director_Library import Aswing_Director
-from WingLoop_Library.Text2Python_Library import text2python_main, python2text, text2python_withderivative, extract_states_vector
-from WingLoop_Library.Control_Library import PyControl
-import sys
 
+import Aswing_Director
+import PyControl
+from PyControl_Text2Python import python2text, initialize_data_dict, read_aswing_file
+import PyControl_Plot
 
 class WingLoop:
     def __init__(self):
@@ -100,11 +95,105 @@ class WingLoop:
                                            wait_time=timer_text, 
                                            finished_writing_file_check_timestep=finished_writing_check_timestep)
         self.ASW_handler.start_aswing(directory=sim_directory,filename=asw_filename,print_output=self.print_output)
+
+
             
-    def Launch_WingLoop_Control(self,sim_directory):
+    def Launch_WingLoop_Control(self,cntrl_directory, 
+                                cntrl_filename, 
+                                timestep,
+                                precomputed_filename = None, 
+                                rebuild_fmu_file = False,
+                                show_simulink_window = False):
         # create a Python Instance, for control reasons. It stores timeseries and control laws
         # the exact controller used is in UAV_control_Strategy (modifiable)
-        self.PyControl = PyControl(sim_directory)
+        self.PyControl = PyControl(
+            control_directory = cntrl_directory, # where the controller is located
+            control_file      = cntrl_filename, # which control file is used
+            precomputed_file  = precomputed_filename, # which precomputed file is used (if none, )
+            Dt                = timestep, #simulation timestep
+            rebuild_fmu       = rebuild_fmu_file, # are we rebuilding the fmu file or not?
+            show_simulink     = show_simulink_window, # are we showing the simulink window during execution?
+        )
+
+        # this lists all available global variables we can plot
+        requested_full = [
+
+            # Position & Attitude
+            "Time","earth X","earth Y","earth Z",
+            "Heading","Elev.","Bank",
+            "Alpha","Beta","Velocity",
+
+            # Angular velocities / accelerations
+            "Wx","Wy","Wz",
+            "Wdotx","Wdoty","Wdotz",
+
+            # Linear velocities / accelerations
+            "Ux","Uy","Uz",
+            "Udotx","Udoty","Udotz",
+
+            # Moments
+            "sum Mx","sum My","sum Mz",
+
+            # Forces
+            "sum Fx","sum Fy","sum Fz",
+
+            # Aero & reference quantities
+            "Lift","Density","Ref.Area",
+            "Weight","Dyn.Pr.","Ref.Span",
+            "Load Fac","VIAS","Ref.Chrd",
+            "Mach","VTAS","MachPG",
+
+            # Aero coefficients
+            "CL","CD","L/D","Cl'",
+            "Cm","CDi","e","Cn'",
+
+            # Convergence (we will treat specially)
+            "IsConverged",
+
+            "Op.Point",
+            "altitude"
+        ]
+
+        self.rename_map = {
+    #        "earth X": "earthX",
+    #        "earth Y": "earthY",
+    #        "earth Z": "earthZ",
+    #        "Elev.": "Pitch"
+        }
+
+        latex = {
+    #        "Time": r"$t$",
+    #        "earthX": r"$X_E$",
+    #        "Velocity": r"$V$"
+        }
+
+        adimensional_vars = {
+            "CL", "CD", "Cm", "Cn'",
+            "Mach", "MachPG", "Load Fac","e"
+        }
+
+        # creates the required control elements: ["F1","F2",...,"F20","E1","E2",...,"E20"]
+        # unused control elements will be set to "None"
+        control_elements = [f"F{i}" for i in range(1, 21)] + [f"E{i}" for i in range(1, 21)]
+
+        for ctrl in control_elements:
+            if ctrl.startswith("F"):
+                num = ctrl[1:]
+                raw = f"Flap {num}"
+            elif ctrl.startswith("E"):
+                num = ctrl[1:]
+                raw = f"Peng {num}"
+            else:
+                raise ValueError(f"Unknown control prefix in {ctrl}")
+            requested_full.append(raw)
+            self.rename_map[raw] = ctrl
+            adimensional_vars.add(ctrl)
+
+        # the PyCntrl_DATA dictionary will contain the timeseries of the 
+        # used aircraft: global variables, controls and state vector
+        # yes, PyCntrl_DATA is iterated at each timestep
+        self.WingLoop_LogFile = initialize_data_dict(requested_full, self.rename_map, latex)
+
                 
     def Load_Files(self,filename):
         """
@@ -216,17 +305,18 @@ class WingLoop:
         
         #instantaneous_flight_data = text2python_main("output")
         doing_LQR = True
-        if doing_LQR:
-            x_state = extract_states_vector("output")
-            output = self.PyControl.UAV_control_Strategy_LQR(instantaneous_state = x_state, Dt = Dt_aswing*K_aswing)
-        else:
-            instantaneous_flight_data = text2python_withderivative("output")
-        
-            # Appending the data in the python script
-            self.PyControl.append_flight_data(instantaneous_flight_data)
 
-            # Controlling through the python script
-            output = self.PyControl.UAV_control_Strategy(instantaneous_flight_data, Dt = Dt_aswing*K_aswing)
+        #x_state = extract_states_vector("output")
+        self.WingLoop_LogFile = read_aswing_file("test_files/test_output/ASWING_test_output_metric", 
+                                                    self.WingLoop_LogFile, 
+                                                    self.rename_map,
+                                                    RecordStateHistory=True)
+        x_state = self.WingLoop_LogFile["ModelStates"][-1] # only get the last available element
+        x_time = self.WingLoop_LogFile["ModelVariables"]["Time"]
+
+        output = self.PyControl.UAV_control_Strategy_LQR(instantaneous_state = x_state, Dt = Dt_aswing*K_aswing)
+
+        # TODO I stopped here
 
         # create the file for the next iteration engine and flap deflections
         python2text("input",output)

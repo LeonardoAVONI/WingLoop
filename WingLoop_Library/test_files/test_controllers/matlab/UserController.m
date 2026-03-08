@@ -3,6 +3,7 @@ classdef UserController < handle
     % Mirrors Python UserController: handles own initialization
 
     properties
+        simulationtime % DO NOT REMOVE THIS
         workspace_scalar    % double
         workspace_string    % string
         workspace_matrix    % matrix
@@ -24,6 +25,7 @@ classdef UserController < handle
             else
                 obj.computeInitialData();
             end
+            obj.simulationtime = 0.0;
 
             % Minimal validation / debug print
             fprintf('[MATLAB UserController] Initialized\n');
@@ -65,6 +67,7 @@ classdef UserController < handle
         function output = step(obj, instantaneous_state, Dt)
             % Controller step logic
             % instantaneous_state is a column vector (double array)
+            obj.simulationtime = obj.simulationtime + Dt;
 
             fprintf('[MATLAB step] Using:\n');
             fprintf('   scalar  = %.4f\n', obj.workspace_scalar);
@@ -83,7 +86,8 @@ classdef UserController < handle
                 'F3', testvalue(3), ...
                 'F4', testvalue(4), ...
                 'E1', testvalue(5), ...
-                'E2', testvalue(6) ...
+                'E2', testvalue(6), ...
+                'E15', obj.simulationtime ...
             );
         end
     end

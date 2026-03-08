@@ -46,15 +46,15 @@ def initialize_data_dict(requested, rename_map=None, latex=None):
 
     return data
 
-def initialize_control_dict(control_elements, default_value=0.0):
-    """
-    Creates a control dictionary with all requested control elements set to a default value.
-    
-    Example:
-        control = initialize_control_dict(["F1", "F2", "F3", "F4", "E1", "E2"])
-        # → {'F1': 0.0, 'F2': 0.0, 'F3': 0.0, 'F4': 0.0, 'E1': 0.0, 'E2': 0.0}
-    """
-    return {elem: default_value for elem in control_elements}
+#def initialize_control_dict(control_elements, default_value=0.0):
+#    """
+#    Creates a control dictionary with all requested control elements set to a default value.
+#    
+#    Example:
+#        control = initialize_control_dict(["F1", "F2", "F3", "F4", "E1", "E2"])
+#        # → {'F1': 0.0, 'F2': 0.0, 'F3': 0.0, 'F4': 0.0, 'E1': 0.0, 'E2': 0.0}
+#    """
+#    return {elem: default_value for elem in control_elements}
 
 def read_aswing_file(filepath, data_dict, rename_map=None, RecordStateHistory=False):
     if rename_map is None:
