@@ -56,10 +56,16 @@ import sys
 import os
 import time
 
-import Aswing_Director
-import PyControl
-from PyControl_Text2Python import python2text, initialize_data_dict, read_aswing_file, export_data_dict #import_data_dict
-from PyControl_Plot import ASWINGLivePlotter
+#import Aswing_Director
+#import PyControl
+#from PyControl_Text2Python import python2text, initialize_data_dict, read_aswing_file, export_data_dict #import_data_dict
+#from PyControl_Plot import ASWINGLivePlotter
+
+from .Aswing_Director import *
+from .PyControl import *
+from .PyControl_Plot import *
+from .PyControl_Text2Python import *
+#from .PyControl_additional import *
 
 class WingLoop:
     def __init__(self):
@@ -68,7 +74,7 @@ class WingLoop:
         """
         pass
     
-    def Launch_ASWING(self,aswing_path,sim_directory,asw_filename,print_output,
+    def Launch_ASWING(self,aswing_fullpath,aswing_alias,sim_directory,asw_filename,print_output,
                       timer_text=0.000001,
                       finished_writing_check_timestep=0.001):
         """
@@ -80,7 +86,6 @@ class WingLoop:
         timer_text (float): timer used by default for the Aswing_Director functions
         finished_writing_check_timestep (float): timer used to check for the last update on the size of the state file written by ASWING
         """
-        print(aswing_path)
         # storing the variables to self.
         self.sim_directory = sim_directory
         self.print_output = print_output #used for the print output of the Aswing_Director
@@ -91,7 +96,7 @@ class WingLoop:
         # change path to go to the sim_directory path
         #os.chdir(os.path.join(self.initial_path,sim_directory))
         # create an ASWING instance
-        self.ASW_handler = Aswing_Director(aswing_path=aswing_path,
+        self.ASW_handler = Aswing_Director(aswing_path=aswing_fullpath,aswing_alias= aswing_alias,
                                            wait_time=timer_text, 
                                            finished_writing_file_check_timestep=finished_writing_check_timestep)
         self.ASW_handler.start_aswing(directory=sim_directory,filename=asw_filename,print_output=self.print_output)
@@ -103,11 +108,7 @@ class WingLoop:
                                 timestep,
                                 precomputed_filename = None, 
                                 rebuild_fmu_file = False,
-                                show_simulink_window = False,
-                                plot_variables= None,
-                                plot_sim_time = None,
-                                plot_refreshtime= None,
-                                plot_size = None):
+                                show_simulink_window = False):
         # create a Python Instance, for control reasons. It stores timeseries and control laws
         # the exact controller used is in UAV_control_Strategy (modifiable)
         self.PyControl = PyControl(
@@ -119,7 +120,14 @@ class WingLoop:
             show_simulink     = show_simulink_window, # are we showing the simulink window during execution?
         )
 
+
+    def InitializePlot(self,liveplot,
+                          plot_variables,
+                          plot_sim_time,
+                          plot_refreshtime,
+                          plot_size = (16, 10)):
         # this lists all available global variables we can plot
+        self.LivePlot = liveplot
         requested_full = [
 
             # Position & Attitude
@@ -315,19 +323,19 @@ class WingLoop:
                 stdout, stderr , time_taken= self.ASW_handler.send_writefile_command_and_receive(filename="output",  
                                                                                                     custom_timer=custom_timer,
                                                                                                     append_or_overwrite="O")
-        
-        self.WingLoop_LogFile = read_aswing_file("test_files/test_output/ASWING_test_output_metric", 
+
+        self.WingLoop_LogFile = read_aswing_file("output", 
                                                     self.WingLoop_LogFile, 
                                                     self.rename_map,
                                                     RecordStateHistory=True)
         # plot things now, if needed, or update the plot
-        if self.WingLoop_IsPlotting:
-            self.WingLoop_liveplot.update(self.WingLoop_LogFile)
+        if self.WingLoop_IsPlotting and self.LivePlot:
+            self.WingLoop_Liveplot.update(self.WingLoop_LogFile)
 
         x_state = self.WingLoop_LogFile["ModelStates"][-1] # only get the last available element
 
         output = self.PyControl.PyControl_DoControllerStep(instantaneous_state = x_state, Dt = Dt_aswing*K_aswing)
-
+        print(output)
         # create the file for the next iteration engine and flap deflections
         python2text("input",output)
 
@@ -427,6 +435,10 @@ class WingLoop:
             self.count += N-self.count
         if self.print_output:
             print("Final Counter",self.count)
+
+        self.WingLoop_Liveplot.update(self.WingLoop_LogFile) #this will be the first plot if self.LivePlot = False
+        print("SIMULATION ENDED, Press Enter to continue")
+        input()
             
     def Outputting_The_State_File(self,statefile_filename):
         stdout, stderr = self.ASW_handler.send_command_and_receive("\n")
@@ -479,7 +491,7 @@ class WingLoop:
             os.remove("output")
             os.remove("input")
         if self.WingLoop_IsPlotting:
-            self.WingLoop_liveplot.close()
+            self.WingLoop_Liveplot.close()
 
         stdout, stderr = self.ASW_handler.send_command_and_receive("\n")  # go back to main menu
         # Quit Aswing

@@ -99,16 +99,46 @@ class Aswing_Director:
             Sends the QUIT command to ASWING and closes the process.
     """
     
-    def __init__(self, aswing_path="/home/daep/l.avoni/Bureau/02_ASWING/ASWING_Stable/bin/",
+    def __init__(self, aswing_path,# "/home/daep/l.avoni/Bureau/02_ASWING/ASWING_Stable/bin/"
+                 aswing_alias,
                  wait_time=0.03, #
                  finished_writing_file_check_timestep=0.001):
+        
+        if aswing_path is None:
+            try:
+                type_output = subprocess.check_output(
+                    f"bash -ic 'type {aswing_alias}'",
+                    shell=True,
+                    text=True,
+                    stderr=subprocess.DEVNULL
+                ).strip()
+                # Output is: "aswing_stable is aliased to `/path/to/aswing'"
+                # Extract the path from between backtick and single quote
+                import re
+                match = re.search(r'`([^\']+)\'', type_output)
+                if not match:
+                    raise RuntimeError(f"Could not parse path from: {type_output}")
+                aswing_exec = match.group(1)
+
+            except subprocess.CalledProcessError:
+                raise RuntimeError(
+                    f"Could not find ASWING executable using alias '{aswing_alias}'. "
+                    "Check your .bashrc alias."
+                )
+
+            if not aswing_exec:
+                raise RuntimeError(
+                    f"Alias '{aswing_alias}' did not resolve to an executable."
+                )
+            aswing_path = os.path.dirname(aswing_exec)
+        print(aswing_path)
+
         self.aswing_path = aswing_path
         self.asw_process = None
         self.stdout_queue = Queue() #where outputs are written
         self.stderr_queue = Queue() #where error messages are written
         self.wait_time=wait_time
         self.finished_writing_file_check_timestep = finished_writing_file_check_timestep
-
 
     def enqueue(self, pipe, queue):
         """
@@ -139,8 +169,12 @@ class Aswing_Director:
 
         # starts ASWING, with the UAV file if provided
         start_command = [os.path.join(self.aswing_path, "aswing")]
+
         if filename:
-            start_command.append(filename.strip(".asw"))
+            clean_name = filename.removesuffix(".asw")
+            start_command.append(clean_name)
+            print("[aswing director]", clean_name)
+
 
         self.asw_process = subprocess.Popen(start_command,
             stdin=subprocess.PIPE,

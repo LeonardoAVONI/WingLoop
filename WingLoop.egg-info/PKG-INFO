@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: WingLoop
+Version: 2.0.0
+Summary: WingLoop control and aircraft simulation tools for ASWING
+Author: Leonardo Avoni
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: numpy
+Requires-Dist: matplotlib
+
+
+
+To install:
+pip install -e 02_WingLoop
+(to be typed in the root folder of 02_WingLoop)

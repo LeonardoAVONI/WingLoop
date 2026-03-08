@@ -42,10 +42,14 @@ def _detect_control_vars(model_variables: dict):
     """Return sorted lists of flap keys (F1…F20) and engine keys (E1…E20)."""
     flap_pat   = re.compile(r'^F(\d{1,2})$')
     engine_pat = re.compile(r'^E(\d{1,2})$')
-    flaps   = sorted([k for k in model_variables if flap_pat.match(k)],
-                     key=lambda x: int(x[1:]))
-    engines = sorted([k for k in model_variables if engine_pat.match(k)],
-                     key=lambda x: int(x[1:]))
+    flaps   = sorted(
+        [k for k in model_variables
+         if flap_pat.match(k) and model_variables[k].get("values")],
+        key=lambda x: int(x[1:]))
+    engines = sorted(
+        [k for k in model_variables
+         if engine_pat.match(k) and model_variables[k].get("values")],
+        key=lambda x: int(x[1:]))
     return flaps, engines
 
 
@@ -58,6 +62,47 @@ def _get_values(data_dict: dict, key: str):
 def _get_unit(data_dict: dict, key: str):
     mv = data_dict.get("ModelVariables", {})
     return mv.get(key, {}).get("unit") or ""
+
+
+def _compute_diverged_spans(t_arr: np.ndarray, conv_arr: np.ndarray):
+    """
+    Given parallel arrays of time values and boolean convergence flags,
+    return a list of (t_start, t_end) intervals where the simulation was
+    NOT converged.
+
+    The span is extended half a time-step on each side so that a single
+    unconverged point still produces a visible rectangle.
+    """
+    if len(t_arr) == 0 or len(conv_arr) == 0:
+        return []
+
+    n   = min(len(t_arr), len(conv_arr))
+    t   = t_arr[:n]
+    ok  = np.array(conv_arr[:n], dtype=bool)
+    bad = ~ok
+
+    if not bad.any():
+        return []
+
+    # Typical step size for half-step padding
+    dt = float(np.median(np.diff(t))) * 0.5 if n > 1 else 0.0
+
+    spans = []
+    in_span = False
+    t_start = None
+
+    for i, is_bad in enumerate(bad):
+        if is_bad and not in_span:
+            t_start = t[i] - dt
+            in_span = True
+        elif not is_bad and in_span:
+            spans.append((t_start, t[i - 1] + dt))
+            in_span = False
+
+    if in_span:                          # still diverged at the last sample
+        spans.append((t_start, t[-1] + dt))
+
+    return spans
 
 
 # ── main class ────────────────────────────────────────────────────────────────
@@ -111,6 +156,10 @@ class ASWINGLivePlotter:
         # track whether we have set up axes for actuation channels yet
         self._actuation_keys: list = []
 
+        # convergence overlay state
+        self._div_spans: list = []       # list of axvspan patches, per axes key
+        self._warn_text = None           # figure-level warning Text artist
+
     # ── public API ───────────────────────────────────────────────────────────
 
     def update(self, data_dict: dict, force_draw: bool = False):
@@ -161,6 +210,9 @@ class ASWINGLivePlotter:
             ax.relim()
             ax.autoscale_view(scalex=False)   # keep x fixed to total_sim_time
 
+        # ── convergence overlays ──────────────────────────────────────────
+        self._update_convergence_overlays(data_dict, t_arr)
+
         # ── throttle redraws ──────────────────────────────────────────────
         now = time.time()
         if force_draw or (now - self._last_draw_time) >= self.refresh_interval:
@@ -194,6 +246,49 @@ class ASWINGLivePlotter:
 
     # ── private helpers ───────────────────────────────────────────────────────
 
+    def _update_convergence_overlays(self, data_dict: dict, t_arr: np.ndarray):
+        """
+        Recompute diverged time spans from IsConverged and redraw red axvspan
+        patches on every subplot.  Old patches are removed before new ones are
+        added so there is no accumulation across update() calls.
+        """
+        conv_vals = _get_values(data_dict, "IsConverged")
+        if not conv_vals:
+            return
+
+        spans = _compute_diverged_spans(t_arr, np.array(conv_vals, dtype=bool))
+
+        # ── remove previous patches ───────────────────────────────────────
+        for patch in self._div_spans:
+            try:
+                patch.remove()
+            except ValueError:
+                pass   # already removed
+        self._div_spans = []
+
+        # ── draw new patches on every subplot ─────────────────────────────
+        all_keys = self.parameter_list + self._actuation_keys
+        for t0, t1 in spans:
+            for key in all_keys:
+                if key not in self._axes:
+                    continue
+                patch = self._axes[key].axvspan(
+                    t0, t1,
+                    facecolor="red", alpha=0.15,
+                    zorder=0, label="_nolegend_"
+                )
+                self._div_spans.append(patch)
+
+        # ── update the figure-level warning banner ────────────────────────
+        if spans:
+            # Build a compact summary, e.g. "⚠ Diverged: 35.0–40.0 s, 55.0–57.5 s"
+            span_strs = ", ".join(f"{t0:.2g}–{t1:.2g} s" for t0, t1 in spans)
+            self._warn_text.set_text(f"⚠  NOT CONVERGED: {span_strs}")
+            self._warn_text.set_alpha(1.0)
+        else:
+            self._warn_text.set_text("")
+            self._warn_text.set_alpha(0.0)
+
     def _build_figure(self, data_dict: dict):
         """
         Build the complete figure layout on first call.
@@ -215,7 +310,7 @@ class ASWINGLivePlotter:
         fig.canvas.manager.set_window_title(f"WingLoop: {model_name} live plot")
         fig.subplots_adjust(
             left=0.07, right=0.97,
-            top=0.93, bottom=0.06,
+            top=0.88, bottom=0.06,
             wspace=0.35, hspace=0.55
         )
 
@@ -264,11 +359,13 @@ class ASWINGLivePlotter:
 
         # ── column titles ─────────────────────────────────────────────────
         if n_left:
-            fig.text(0.27, 0.965, "State Variables",
+            fig.text(0.27, 0.91, "State Variables",
                      ha="center", fontsize=9, fontweight="bold")
         if n_right:
-            fig.text(0.755, 0.965, "Actuation Channels",
+            fig.text(0.755, 0.91, "Actuation Channels",
                      ha="center", fontsize=9, fontweight="bold")
+            
+
 
         # ── top-left info block (updated on every update() call) ──────────
         self._info_text = fig.text(
@@ -277,6 +374,17 @@ class ASWINGLivePlotter:
             fontsize=8, fontfamily="monospace",
             bbox=dict(boxstyle="round,pad=0.3", facecolor="lightyellow",
                       edgecolor="gray", alpha=0.8)
+        )
+
+        # ── convergence warning banner (hidden until needed) ───────────────
+        self._warn_text = fig.text(
+            0.5, 0.97, "",
+            ha="center", va="center",
+            fontsize=13, fontweight="bold", color="darkred",
+            alpha=0.0,                          # invisible until triggered
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="mistyrose",
+                      edgecolor="red", linewidth=2),
+            zorder=10,
         )
 
         plt.ion()          # interactive mode → non-blocking show
@@ -319,6 +427,9 @@ if __name__ == "__main__":
     N = 80   # number of "timesteps" to fake
     t = np.linspace(0, 40, N)
 
+    # Simulate divergence between t=18 s and t=26 s
+    is_converged = [not (18 <= ti <= 26) for ti in t]
+
     def _fake_var(vals, unit=None):
         return {"values": list(vals), "unit": unit, "latex": None}
 
@@ -326,19 +437,22 @@ if __name__ == "__main__":
         "ModelName": "Demo HALE Aircraft",
         "ModelStates": [],
         "ModelVariables": {
-            "Time":    _fake_var(t,                                    "s"),
-            "earth X": _fake_var(t * 12.0,                            "m"),
-            "earth Y": _fake_var(np.sin(t * 0.3) * 5,                 "m"),
-            "earth Z": _fake_var(-t * 0.5 + np.random.randn(N)*0.2,   "m"),
-            "Heading": _fake_var(np.degrees(np.arctan(t*0.05)),        "deg"),
-            "Elev.":   _fake_var(np.sin(t * 0.2) * 3,                 "deg"),
-            "Bank":    _fake_var(np.cos(t * 0.15) * 8,                "deg"),
-            "F1":      _fake_var(np.sin(t * 0.1) * 5,                 "deg"),
-            "F2":      _fake_var(np.cos(t * 0.12) * 3,                "deg"),
-            "E1":      _fake_var(9.5 + np.sin(t * 0.05),              ""),
-            "E2":      _fake_var(10.5 + np.cos(t * 0.05),             ""),
+            "Time":        _fake_var(t,                                    "s"),
+            "IsConverged": {"values": is_converged, "unit": None, "latex": None},
+            "earth X":     _fake_var(t * 12.0,                            "m"),
+            "earth Y":     _fake_var(np.sin(t * 0.3) * 5,                 "m"),
+            "earth Z":     _fake_var(-t * 0.5 + np.random.randn(N)*0.2,   "m"),
+            "Heading":     _fake_var(np.degrees(np.arctan(t*0.05)),        "deg"),
+            "Elev.":       _fake_var(np.sin(t * 0.2) * 3,                 "deg"),
+            "Bank":        _fake_var(np.cos(t * 0.15) * 8,                "deg"),
+            "F1":          _fake_var(np.sin(t * 0.1) * 5,                 "deg"),
+            "F2":          _fake_var(np.cos(t * 0.12) * 3,                "deg"),
+            "E1":          _fake_var(9.5 + np.sin(t * 0.05),              ""),
+            "E2":          _fake_var(10.5 + np.cos(t * 0.05),             ""),
+            "E15":          {"values": [], "unit": None,"latex": None}
         }
     }
+
 
     param_list = ["earth X", "earth Y", "earth Z", "Heading", "Elev.", "Bank"]
 
@@ -364,6 +478,6 @@ if __name__ == "__main__":
         time.sleep(0.03)   # simulate computation time
 
     plotter.export("aswing_live_demo.pdf")
-    #print("Done – press Enter to close the window.")
+    print("Done – press Enter to close the window.")
     input()
     plotter.close()
