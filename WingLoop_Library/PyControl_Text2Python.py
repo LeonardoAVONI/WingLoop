@@ -249,6 +249,116 @@ def python2text(filename, control):
     with open(filename, "w") as f:
         f.write(content)
 
+
+def export_data_dict(data_dict, filepath):
+    """
+    Serialise *data_dict* (as produced by read_aswing_file / initialize_data_dict)
+    to a human-readable JSON file.
+
+    numpy arrays (ModelStates entries) are converted to nested Python lists so
+    that the file is plain JSON with no binary blobs.  All other values are
+    already JSON-compatible (str, float, bool, list, None).
+
+    Parameters
+    ----------
+    data_dict : dict   – the dictionary to export
+    filepath  : str    – destination path, e.g. "results/run01.json"
+                         The .json extension is appended automatically if absent.
+
+    Returns
+    -------
+    filepath : str     – the path actually written (useful when the extension
+                         was added automatically)
+
+    Example
+    -------
+    export_data_dict(data_metric, "results/run01")
+    # → writes  results/run01.json
+    """
+    import json
+    import os
+
+    if not filepath.endswith(".json"):
+        filepath = filepath + ".json"
+
+    os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
+
+    def _make_serialisable(obj):
+        """Recursively convert numpy types / arrays to plain Python."""
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, (np.bool_,)):
+            return bool(obj)
+        if isinstance(obj, list):
+            return [_make_serialisable(v) for v in obj]
+        if isinstance(obj, dict):
+            return {k: _make_serialisable(v) for k, v in obj.items()}
+        return obj   # str, float, int, bool, None  → already fine
+
+    serialisable = _make_serialisable(data_dict)
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(serialisable, f, indent=2, ensure_ascii=False)
+
+    n_vars   = len(data_dict.get("ModelVariables", {}))
+    n_states = len(data_dict.get("ModelStates", []))
+    print(f"[export_data_dict] Saved → {filepath}  "
+          f"({n_vars} variables, {n_states} state snapshot(s))")
+    return filepath
+
+
+def import_data_dict(filepath):
+    """
+    Re-load a dictionary that was previously saved with export_data_dict().
+
+    ModelStates entries (lists-of-lists in JSON) are converted back to numpy
+    arrays to match the structure produced by read_aswing_file.
+    All variable value lists are kept as plain Python lists, exactly as they
+    are when the dict is freshly populated.
+
+    Parameters
+    ----------
+    filepath : str  – path to the .json file (with or without extension)
+
+    Returns
+    -------
+    data_dict : dict  – ready-to-use dictionary, structurally identical to
+                        what read_aswing_file returns
+
+    Example
+    -------
+    data = import_data_dict("results/run01.json")
+    print_aswing_summary(data)
+    """
+    import json
+
+    if not filepath.endswith(".json"):
+        filepath = filepath + ".json"
+
+    with open(filepath, "r", encoding="utf-8") as f:
+        data_dict = json.load(f)
+
+    # Restore numpy arrays for ModelStates
+    raw_states = data_dict.get("ModelStates")
+    if isinstance(raw_states, list) and raw_states:
+        # History mode  → list of arrays
+        if isinstance(raw_states[0], list):
+            data_dict["ModelStates"] = [np.array(s) for s in raw_states]
+        else:
+            # Single snapshot stored as a flat list
+            data_dict["ModelStates"] = np.array(raw_states)
+
+    n_vars   = len(data_dict.get("ModelVariables", {}))
+    n_states = len(data_dict.get("ModelStates", []))
+    print(f"[import_data_dict] Loaded ← {filepath}  "
+          f"({n_vars} variables, {n_states} state snapshot(s))")
+    return data_dict
+
+
 if __name__=="__main__":
     requested = [
 
@@ -348,7 +458,9 @@ if __name__=="__main__":
     python2text("controls", control)
     # → writes file with columns: time F1 F2 F3 E1 E2
     
-    
+    export_data_dict(data_metric,"data_imperial.json")
+    a = import_data_dict("data_imperial.json")
+    print(a)
     #pprint.pprint(data_metric)
     """  
 

@@ -364,6 +364,6 @@ if __name__ == "__main__":
         time.sleep(0.03)   # simulate computation time
 
     plotter.export("aswing_live_demo.pdf")
-    print("Done – press Enter to close the window.")
+    #print("Done – press Enter to close the window.")
     input()
     plotter.close()

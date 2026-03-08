@@ -58,8 +58,8 @@ import time
 
 import Aswing_Director
 import PyControl
-from PyControl_Text2Python import python2text, initialize_data_dict, read_aswing_file
-import PyControl_Plot
+from PyControl_Text2Python import python2text, initialize_data_dict, read_aswing_file, export_data_dict #import_data_dict
+from PyControl_Plot import ASWINGLivePlotter
 
 class WingLoop:
     def __init__(self):
@@ -103,7 +103,11 @@ class WingLoop:
                                 timestep,
                                 precomputed_filename = None, 
                                 rebuild_fmu_file = False,
-                                show_simulink_window = False):
+                                show_simulink_window = False,
+                                plot_variables= None,
+                                plot_sim_time = None,
+                                plot_refreshtime= None,
+                                plot_size = None):
         # create a Python Instance, for control reasons. It stores timeseries and control laws
         # the exact controller used is in UAV_control_Strategy (modifiable)
         self.PyControl = PyControl(
@@ -194,7 +198,18 @@ class WingLoop:
         # yes, PyCntrl_DATA is iterated at each timestep
         self.WingLoop_LogFile = initialize_data_dict(requested_full, self.rename_map, latex)
 
-                
+        self.WingLoop_IsPlotting = False
+        if not ((plot_variables == None) or (plot_sim_time == None) or (plot_refreshtime == None) or (plot_size == None) ):
+            self.WingLoop_IsPlotting = True
+        if self.WingLoop_IsPlotting:
+            self.WingLoop_Liveplot = ASWINGLivePlotter(
+                parameter_list = plot_variables,
+                total_sim_time = plot_sim_time ,
+                refresh_interval = plot_refreshtime,
+                figsize = plot_size
+            )
+
+
     def Load_Files(self,filename):
         """
         From the main ASWING menu, this function loads the file called "filename", 
@@ -306,9 +321,8 @@ class WingLoop:
                                                     self.rename_map,
                                                     RecordStateHistory=True)
         # plot things now, if needed, or update the plot
-        #TODO
-
-
+        if self.WingLoop_IsPlotting:
+            self.WingLoop_liveplot.update(self.WingLoop_LogFile)
 
         x_state = self.WingLoop_LogFile["ModelStates"][-1] # only get the last available element
 
@@ -414,11 +428,6 @@ class WingLoop:
         if self.print_output:
             print("Final Counter",self.count)
             
-        ### Plotting The Data
-        
-
-
-
     def Outputting_The_State_File(self,statefile_filename):
         stdout, stderr = self.ASW_handler.send_command_and_receive("\n")
         stdout, stderr = self.ASW_handler.send_command_and_receive("HSAV")
@@ -426,7 +435,7 @@ class WingLoop:
 
 ### OUTPUT THE RESULTS
 
-    def Outputting_The_Results(self,plot = True, timeseries=None):
+    def Outputting_The_Results(self, custom_filename = None):
         """_summary_
 
         Args:
@@ -435,16 +444,25 @@ class WingLoop:
             
         Maybe one could create this with the function that stops only when the file is done writing
         """
-        if plot:
-            self.PyControl.plot_the_data()
-        # writing an output timeseries for various variables
-        if timeseries is not None:
-            print("TEST")
-            stdout, stderr = self.ASW_handler.send_command_and_receive("P")
-            stdout, stderr = self.ASW_handler.send_command_and_receive("W")
-            if os.path.exists(timeseries+".t"):
-                os.remove(timeseries+".t")
-            stdout, stderr = self.ASW_handler.send_command_and_receive(timeseries+".t",custom_timer=1)
+        #if plot:
+        #    self.PyControl.plot_the_data()
+        ## writing an output timeseries for various variables
+        #if timeseries is not None:
+        #    print("TEST")
+        #    stdout, stderr = self.ASW_handler.send_command_and_receive("P")
+        #    stdout, stderr = self.ASW_handler.send_command_and_receive("W")
+        #    if os.path.exists(timeseries+".t"):
+        #        os.remove(timeseries+".t")
+        #    stdout, stderr = self.ASW_handler.send_command_and_receive(timeseries+".t",custom_timer=1)
+
+
+        ## Exporting the data 
+        if custom_filename == None:
+            custom_filename = self.WingLoop_LogFile["ModelName"]
+        export_data_dict(self.WingLoop_LogFile,custom_filename + ".json")
+
+        if self.WingLoop_IsPlotting:
+            self.WingLoop_Liveplot.export(custom_filename+".pdf")
 
     def Closing_WingLoop(self,removefiles = True):
         """Is in charge of closing the ASWING and ending the program
@@ -460,6 +478,8 @@ class WingLoop:
         if removefiles:
             os.remove("output")
             os.remove("input")
+        if self.WingLoop_IsPlotting:
+            self.WingLoop_liveplot.close()
 
         stdout, stderr = self.ASW_handler.send_command_and_receive("\n")  # go back to main menu
         # Quit Aswing
