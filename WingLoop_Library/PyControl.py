@@ -1,51 +1,93 @@
 """
 ====================================================================================
-Control_Library, Package Version
+WingLoop Library — PyControl
 
 Author: Leonardo AVONI
 Date: 08/11/2024
 Email: avonileonardo@gmail.com
 
-Last modified: 06/03/2026
+Last modified: 08/03/2026
 
 ====================================================================================
 
 Description:
-Step-by-step controller wrapper supporting:
-  - python       : pure Python UserController class
-  - matlab       : MATLAB UserController class via matlab.engine
-  - simulink     : Simulink .slx model, stepped via eng.sim() with ExternalInput
-  - simulink_fmu : FMU exported from Simulink, stepped via fmpy
+    Unified, step-by-step controller wrapper for the WingLoop aeroservoelastic
+    simulation framework.  The backend is selected automatically from the extension
+    of the supplied control file:
 
-HOW WORKSPACE VARIABLES WORK PER METHOD
-────────────────────────────────────────
+        .py   → python        Pure Python UserController class.
+        .m    → matlab        MATLAB UserController class via matlab.engine.
+        .slx  → simulink      Simulink model stepped via eng.sim() + ExternalInput.
+        .fmu  → simulink_fmu  FMU (Co-Simulation, FMI 2.0) exported from Simulink,
+                              stepped via fmpy.
+
+    All four backends share the same call interface:
+
+        ctrl   = PyControl(control_directory, control_file, ...)
+        output = ctrl.PyControl_DoControllerStep(state, Dt=0.01)
+        ctrl.terminate()
+
+    where `output` is a plain Python dict whose keys are the controller output
+    signal names (e.g. {'F1': ..., 'F2': ..., 'E1': ...}).
+
+──────────────────────────────────────────────────────────────────────────────────
+INPUT FILE CONTRACTS
+──────────────────────────────────────────────────────────────────────────────────
+
+python (.py):
+    Must define a class named UserController with:
+      - __init__(self, precomputed_file_path: str) — loads or computes init data.
+      - step(self, instantaneous_state, Dt) → dict — returns output signal dict.
+
+matlab (.m):
+    Must define a MATLAB class named UserController with an equivalent step()
+    method.  Precomputed data loading / default computation is handled inside the
+    class constructor.
+
 simulink (.slx):
-  UserController.m is instantiated via the MATLAB engine.  Its three properties
-  (workspace_scalar, workspace_string, workspace_matrix) are pushed into MATLAB's
-  BASE workspace via assignin('base',...).  Simulink reads them from there at
-  sim() time — exactly as if you had typed them in the MATLAB command window.
-  Result: the .slx model always sees the current UserController values.
-
-  NOTE ON IDENTICAL OUTPUTS: if your precomputed.mat stores the same numeric
-  values as the default computation, Simulink outputs will be identical whether
-  IsPrecomputed is True or False.  Check workspace_string in the log — if it
-  shows 'test_matlab_workspace_database' the precomputed path is working.
+    Requires a UserController.m alongside the .slx.  The three workspace properties
+    of UserController (workspace_scalar, workspace_string, workspace_matrix) are
+    pushed into MATLAB's base workspace before each sim() call.  Output signals
+    (F1–F20, E1–E20) must be saved to the SimulationOutput object
+    (ReturnWorkspaceOutputs=on).
 
 simulink_fmu (.fmu):
-  An FMU exported from Simulink bakes the Base Workspace variable VALUES into the
-  binary at export time (they become FMI start values, not live parameters).
-  After export there is NO live connection back to MATLAB's base workspace.
+    Requires the .fmu binary.  If rebuild_fmu=True, also requires the matching
+    .slx alongside the .fmu (same stem, same directory).
 
-  Two strategies are available:
-  ① rebuild_fmu=True  (recommended when workspace data changes between runs)
-       PyControl pushes UserController values into the MATLAB base workspace,
-       then calls Simulink's exportToFMU2CS to re-export the .fmu, then loads
-       the freshly built FMU.  The rebuilt FMU now carries the correct start
-       values.  Requires the matching .slx file in the same directory as the .fmu.
-  ② rebuild_fmu=False (default — use the .fmu as-is)
-       The FMU runs with whatever values were baked in at the last manual export.
-       Use this when the FMU was already exported with the right data, or when
-       re-exporting is too slow for your workflow.
+──────────────────────────────────────────────────────────────────────────────────
+HOW WORKSPACE VARIABLES WORK PER BACKEND
+──────────────────────────────────────────────────────────────────────────────────
+
+python / matlab:
+    Precomputed data (if provided) is passed as a file path to UserController's
+    constructor.  If the path is empty or missing, the controller computes its own
+    defaults.
+
+simulink (.slx):
+    UserController.m is instantiated via the MATLAB engine and its three properties
+    are pushed into MATLAB's BASE workspace via assignin('base',...).  Simulink
+    reads them from there at sim() time — exactly as if you had typed them in the
+    MATLAB command window.
+
+simulink_fmu (.fmu):
+    An FMU exported from Simulink bakes the Base Workspace variable VALUES into the
+    binary at export time (they become FMI start values, not live parameters).
+    After export there is NO live connection back to MATLAB's base workspace.
+
+    Two strategies are available:
+    ① rebuild_fmu=True  (recommended when workspace data changes between runs)
+         PyControl pushes UserController values into the MATLAB base workspace,
+         then calls Simulink's exportToFMU2CS to re-export the .fmu, then loads
+         the freshly built FMU.  The rebuilt FMU now carries the correct start
+         values.  Requires the matching .slx in the same directory as the .fmu.
+    ② rebuild_fmu=False (default — use the .fmu as-is)
+         The FMU runs with whatever values were baked in at the last manual export.
+         Faster startup; use when the FMU is already up to date.
+
+──────────────────────────────────────────────────────────────────────────────────
+
+Test cases are available in test_files/test_controllers/
 
 ====================================================================================
 """
@@ -68,8 +110,21 @@ from fmpy import read_model_description, extract, instantiate_fmu
 class SimulinkFMUController:
     """
     Thin wrapper around an FMU exported from Simulink (Co-Simulation, FMI 2.0).
-    Inputs  : statein[1] … statein[N]  (Real, per‑element)
-    Outputs : F1, F2, F3, F4, E1, E2
+
+    Manages the full FMU lifecycle: parse the model description, extract the
+    binary to a temp directory, instantiate the co-simulation object, run
+    communication steps, and clean up on termination.
+
+    Inputs  : statein[1] … statein[N]  — flat state vector, one port per element.
+    Outputs : all variables with causality='output', discovered automatically
+              from the model description (no hardcoded signal names).
+
+    Parameters
+    ----------
+    fmu_path : str
+        Absolute path to the .fmu file.
+    Dt : float
+        Communication step size in seconds (default 0.01).
     """
 
     def __init__(self, fmu_path: str, Dt: float = 0.01):
@@ -125,6 +180,27 @@ class SimulinkFMUController:
 
     # ------------------------------------------------------------------
     def step(self, instantaneous_state) -> dict:
+        """
+        Advance the FMU by one communication step and return all output values.
+
+        Sets the statein input ports, calls doStep from self.time to
+        self.time + Dt, increments self.time, then reads all output ports.
+
+        Parameters
+        ----------
+        instantaneous_state : array-like, shape (N,)
+            Current state vector.  Must have exactly self._n_inputs elements.
+
+        Returns
+        -------
+        dict
+            {signal_name: float} for every auto-discovered output variable.
+
+        Raises
+        ------
+        ValueError
+            If len(instantaneous_state) != self._n_inputs.
+        """
         state_array = np.array(instantaneous_state, dtype=np.float64).flatten()
 
         if len(state_array) != self._n_inputs:
@@ -144,6 +220,11 @@ class SimulinkFMUController:
 
     # ------------------------------------------------------------------
     def terminate(self):
+        """
+        Terminate the FMU instance and delete the temporary extraction directory.
+
+        Safe to call multiple times; subsequent calls are no-ops.
+        """
         if self.fmu:
             try:
                 self.fmu.terminate()
@@ -164,28 +245,28 @@ class PyControl:
     Parameters
     ----------
     control_directory : str
-        Folder that contains the controller file (and UserController.m for
-        simulink / simulink_fmu).
+        Folder containing the controller file.  Added to the MATLAB path
+        automatically for MATLAB-based backends.
     control_file : str
-        Filename whose extension determines the method:
+        Filename whose extension selects the backend:
           .py  → python
           .m   → matlab
           .slx → simulink
           .fmu → simulink_fmu
     precomputed_file : str | None
-        Optional filename (inside control_directory) for pre-computed data.
-        If None or not found, UserController will compute its own defaults.
-    library_path : str | None
-        Root of WingLoop_Library (used for MATLAB addpath). Auto-detected if None.
+        Optional filename (inside control_directory) for pre-computed
+        initialisation data.  Passed to UserController; if None or not found
+        the controller computes its own defaults.
     Dt : float
-        Default timestep (seconds).
+        Default communication / simulation timestep in seconds (default 0.01).
     rebuild_fmu : bool
-        simulink_fmu only. Re-export the FMU from the matching .slx before running.
+        simulink_fmu only.  Re-export the FMU from the matching .slx before
+        running so that current UserController workspace values are baked in.
+        Requires the .slx to be present alongside the .fmu.  Default False.
     show_simulink : bool
-        simulink only. If True, opens the Simulink block-diagram window so that
-        Scopes and other sinks display live data during each sim() call.
-        Requires a full MATLAB desktop session (JVM enabled, display available).
-        Has no effect for other methods.
+        simulink only.  If True, opens the Simulink block-diagram window so
+        that Scopes and sinks display live data.  Requires a full MATLAB desktop
+        session (JVM + display).  Default False.
     """
 
     # ------------------------------------------------------------------
@@ -290,10 +371,24 @@ class PyControl:
     # ------------------------------------------------------------------
     def _setup(self):
         """
-        Instantiate UserController (Python or MATLAB) so it either loads
-        pre-computed data or runs its default computation.
-        For simulink / simulink_fmu the resulting workspace variables are
-        pushed where they need to go (MATLAB base workspace / FMU params).
+        Initialise the UserController and distribute workspace data.
+
+        Behaviour per backend:
+
+        python
+            Imports the .py module, instantiates UserController, and passes
+            the precomputed file path (empty string if not available).
+        matlab / simulink
+            Instantiates UserController.m via the MATLAB engine, then calls
+            _push_controller_to_base_workspace() so Simulink can read the
+            workspace properties at sim() time.
+        simulink_fmu, rebuild_fmu=True
+            Instantiates UserController.m, pushes workspace properties to the
+            MATLAB base workspace, then calls _push_controller_to_fmu() which
+            re-exports the .slx to a fresh .fmu and reloads fmu_controller.
+        simulink_fmu, rebuild_fmu=False
+            Skips MATLAB entirely; the FMU runs with values baked in at the
+            last manual export.
         """
 
         if self.method == 'python':
@@ -337,10 +432,24 @@ class PyControl:
     # ------------------------------------------------------------------
     def _push_controller_to_base_workspace(self):
         """
-        Extract all three UserController properties and push them to MATLAB's
-        base workspace in a single round-trip (one eng.eval call).
+        Push UserController workspace properties to MATLAB's base workspace.
 
-        Previously this required 6 separate Python↔MATLAB IPC calls; now it's 1.
+        Extracts workspace_scalar, workspace_string, and workspace_matrix from
+        the instantiated MATLAB UserController object and writes them to
+        MATLAB's base workspace via assignin('base',...).  Simulink reads
+        variables from the base workspace at sim() time, so this must complete
+        before the first sim() call.
+
+        Batched into two eng.eval() calls (one write, one readback) to minimise
+        Python↔MATLAB IPC round-trips.  The matrix is excluded from the readback
+        because a struct containing a matrix field is non-scalar and cannot be
+        returned by eng.eval().
+
+        Raises
+        ------
+        RuntimeError
+            If UserController.m does not expose the three expected properties,
+            or if the MATLAB engine call fails.
         """
         if self.matlab_controller_instance is None:
             return
@@ -381,11 +490,26 @@ class PyControl:
     # ------------------------------------------------------------------
     def _push_controller_to_fmu(self):
         """
-        Re-export the FMU from the matching .slx, with current base workspace
-        values baked in, then reload self.fmu_controller from the fresh binary.
+        Re-export the FMU from the matching .slx and reload self.fmu_controller.
 
-        Only called when rebuild_fmu=True. The .slx must have the same stem as
-        the .fmu and live in the same directory.
+        Called only when rebuild_fmu=True.  Assumes _push_controller_to_base_workspace()
+        has already run so the MATLAB base workspace holds the correct values.
+
+        Procedure:
+            1. Terminate and discard the existing FMU instance.
+            2. Load the .slx (no-op if already loaded).
+            3. Call exportToFMU2CS to overwrite the .fmu with one that has
+               current base workspace values baked in as FMI start values.
+            4. Verify the output file exists, then construct a new
+               SimulinkFMUController from it.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the .slx is not found alongside the .fmu, or if exportToFMU2CS
+            ran but produced no output file.
+        RuntimeError
+            If exportToFMU2CS fails (e.g. missing Simulink Coder licence).
         """
         slx_name = self.control_model_name
         slx_path = os.path.join(self.control_directory, slx_name + '.slx')
@@ -438,17 +562,26 @@ class PyControl:
     # ------------------------------------------------------------------
     def PyControl_DoControllerStep(self, instantaneous_state, Dt: float | None = None) -> dict:
         """
-        Run one control step.
+        Execute one control step and return the controller outputs.
+
+        Dispatches to the appropriate backend and returns a dict whose keys are
+        the output signal names discovered from that backend.  Output names are
+        never hardcoded; they are found once on the first call and cached.
 
         Parameters
         ----------
         instantaneous_state : array-like, shape (N,)
+            Current plant state vector fed to the controller.
         Dt : float | None
-            If None, uses self.Dt set at construction.
+            Timestep for this step in seconds.  If None, uses self.Dt.
 
         Returns
         -------
-        dict with keys F1, F2, F3, F4, E1, E2
+        dict
+            {signal_name: float} for every output exposed by the controller.
+            Keys follow the pattern F1–F20 (force/actuator commands) and
+            E1–E20 (engine or auxiliary outputs), depending on what the
+            controller defines.
         """
         if Dt is None:
             Dt = self.Dt
@@ -485,8 +618,27 @@ class PyControl:
     # ------------------------------------------------------------------
     def _simulink_step(self, instantaneous_state, Dt: float) -> dict:
         """
-        Advance the Simulink model by one Dt using eng.sim() with ExternalInput.
-        Mirrors the approach in previous_file.py that is known to work.
+        Advance the Simulink model by one timestep and return output values.
+
+        Builds a two-row ExternalInput matrix [t0, state; t1, state], pushes it
+        to the MATLAB engine workspace alongside Tstart and Tstop, then calls
+        eng.sim() for the interval [t0, t1].  On the first call,
+        _probe_simulink_signals() is invoked to discover which F/E signal names
+        exist in the SimulationOutput object; the result is cached so discovery
+        only happens once.  The sim() call relies on the model's own saved
+        configuration (SaveOutput, SaveFormat, etc.) without overriding them.
+
+        Parameters
+        ----------
+        instantaneous_state : array-like, shape (N,)
+            Current state vector; held constant across [t0, t1].
+        Dt : float
+            Duration of this simulation step in seconds.
+
+        Returns
+        -------
+        dict
+            {signal_name: float} for every F/E signal found in simOut.
         """
         state_array = np.array(instantaneous_state, dtype=np.float64).flatten()
 
@@ -544,10 +696,18 @@ class PyControl:
     # ------------------------------------------------------------------
     def _probe_simulink_signals(self) -> list:
         """
-        Probe simOut for all F1–F20 and E1–E20 and return those that exist.
-        Uses isfield() / exist checks so MATLAB never prints error messages
-        for missing fields. Tries timeseries format first, then plain array.
-        Called once after the first sim(); result cached in _simulink_signal_names.
+        Discover which F/E output signals exist in the current simOut object.
+
+        Probes F1–F20 and E1–E20 using MATLAB's isfield() and isprop() so that
+        no error messages are printed to stdout for absent signals.  Called once
+        after the first sim(); the result is stored in self._simulink_signal_names
+        and reused on every subsequent step.
+
+        Returns
+        -------
+        list[str]
+            Ordered list of signal names present in simOut,
+            e.g. ['F1', 'F2', 'F3', 'F4', 'E1', 'E2', 'E15'].
         """
         candidates = [f"F{i}" for i in range(1, 21)] + [f"E{i}" for i in range(1, 21)]
         found = []
@@ -565,7 +725,17 @@ class PyControl:
 
     # ------------------------------------------------------------------
     def terminate(self):
-        """Release all resources (FMU + MATLAB engine)."""
+        """
+        Release all resources held by this controller instance.
+
+        FMU backend  : calls SimulinkFMUController.terminate(), which terminates
+                       the co-simulation and deletes the temp extraction directory.
+        MATLAB backend: quits the MATLAB engine process.  If show_simulink=True
+                       the engine is intentionally left running so the Simulink
+                       window stays open; the user must close MATLAB manually.
+
+        Safe to call even if initialisation did not complete fully.
+        """
         if self.fmu_controller:
             self.fmu_controller.terminate()
         if self.eng:
@@ -598,7 +768,7 @@ if __name__ == "__main__":
     """
 
     method        = "simulink_fmu"   # change to: python | matlab | simulink | simulink_fmu
-    IsPrecomputed = False
+    IsPrecomputed = True
     RebuildFMU    = True   # simulink_fmu only
     ShowSimulink  = False   # simulink only: open block-diagram + scopes graphically
 
