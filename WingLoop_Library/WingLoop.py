@@ -301,22 +301,18 @@ class WingLoop:
                                                                                                     custom_timer=custom_timer,
                                                                                                     append_or_overwrite="O")
         
-        # writing a dictionary containing the flight data specifics
-        
-        #instantaneous_flight_data = text2python_main("output")
-        doing_LQR = True
-
-        #x_state = extract_states_vector("output")
         self.WingLoop_LogFile = read_aswing_file("test_files/test_output/ASWING_test_output_metric", 
                                                     self.WingLoop_LogFile, 
                                                     self.rename_map,
                                                     RecordStateHistory=True)
+        # plot things now, if needed, or update the plot
+        #TODO
+
+
+
         x_state = self.WingLoop_LogFile["ModelStates"][-1] # only get the last available element
-        x_time = self.WingLoop_LogFile["ModelVariables"]["Time"]
 
-        output = self.PyControl.UAV_control_Strategy_LQR(instantaneous_state = x_state, Dt = Dt_aswing*K_aswing)
-
-        # TODO I stopped here
+        output = self.PyControl.PyControl_DoControllerStep(instantaneous_state = x_state, Dt = Dt_aswing*K_aswing)
 
         # create the file for the next iteration engine and flap deflections
         python2text("input",output)
