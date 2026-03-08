@@ -89,6 +89,12 @@ simulink_fmu (.fmu):
 
 Test cases are available in test_files/test_controllers/
 
+──────────────────────────────────────────────────────────────────────────────────
+NOTES AND IMPROVEMENTS
+──────────────────────────────────────────────────────────────────────────────────
+Time in simulink_fmu is different than the others
+
+
 ====================================================================================
 """
 
