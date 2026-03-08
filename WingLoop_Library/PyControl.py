@@ -95,16 +95,15 @@ class SimulinkFMUController:
         self._input_vrs    = [v.valueReference for v in input_vars]
         self._n_inputs     = len(input_vars)
 
-        # Cache output VRs
-        output_names = ['F1', 'F2', 'F3', 'F4', 'E1', 'E2','E15']
-        self._output_vrs = [
-            next(
-                (v.valueReference for v in self.model_description.modelVariables if v.name == n),
-                None,
-            )
-            for n in output_names
-        ]
-        self._output_names = output_names
+        # Auto-discover all output variables from the model description.
+        # Any variable with causality='output' is included — no hardcoded names.
+        output_vars = sorted(
+            [v for v in self.model_description.modelVariables if v.causality == 'output'],
+            key=lambda v: v.valueReference,
+        )
+        self._output_vrs   = [v.valueReference for v in output_vars]
+        self._output_names = [v.name for v in output_vars]
+        print(f"[FMU] Auto-discovered {len(self._output_names)} output(s): {self._output_names}")
 
     # ------------------------------------------------------------------
     def set_parameters(self, params: dict):
@@ -466,7 +465,9 @@ class PyControl:
                 np.array(instantaneous_state, dtype=np.float64).flatten().tolist()
             )
             out_ml = self.eng.feval('step', self.matlab_controller_instance, state_ml, Dt, nargout=1)
-            output = {k: float(out_ml[k]) for k in ('F1', 'F2', 'F3', 'F4', 'E1', 'E2','E15')}
+            # Iterate all keys returned by the MATLAB step() function rather than
+            # a hardcoded list — any F/E output added to UserController.m is included.
+            output = {k: float(out_ml[k]) for k in out_ml.keys()}
 
         # ── Simulink FMU ───────────────────────────────────────────────
         elif self.method == 'simulink_fmu':
@@ -518,28 +519,49 @@ class PyControl:
         # Push SimulationOutput object so we can use eval() to extract fields
         self.eng.workspace['simOut'] = out
 
-        # Extract all 6 outputs in one round-trip.
-        # Returns a 1×6 double: [F1 F2 F3 F4 E1 E2]
-        # Try Dataset format (Save format = Dataset, the default) first.
-        try:
-            vals = self.eng.eval(
-                "[simOut.F1.Data(end), simOut.F2.Data(end), simOut.F3.Data(end),"
-                " simOut.F4.Data(end), simOut.E1.Data(end), simOut.E2.Data(end),simOut.E15.Data(end)]",
-                nargout=1,
-            )
-        except Exception:
-            # Fallback: Save format = Array
-            vals = self.eng.eval(
-                "[simOut.F1(end), simOut.F2(end), simOut.F3(end),"
-                " simOut.F4(end), simOut.E1(end), simOut.E2(end),simOut.E15(end)]",
-                nargout=1,
-            )
+        # On the first step, discover which F/E outputs actually exist in simOut
+        # by probing F1-F20 and E1-E20. Result is cached for all subsequent steps.
+        if not hasattr(self, '_simulink_signal_names'):
+            self._simulink_signal_names = self._probe_simulink_signals()
+            print(f"[PyControl] Simulink signals found: {self._simulink_signal_names}")
 
-        v = np.array(vals).flatten()
-        output = dict(zip(('F1', 'F2', 'F3', 'F4', 'E1', 'E2','E15'), v.tolist()))
+        names = self._simulink_signal_names
+
+        # Extract all present signals in one round-trip.
+        # Try timeseries format (.Data(end)) first, fall back to array format ((end)).
+        try:
+            expr = ', '.join(f"simOut.{n}.Data(end)" for n in names)
+            vals = self.eng.eval(f"[{expr}]", nargout=1)
+        except Exception:
+            expr = ', '.join(f"simOut.{n}(end)" for n in names)
+            vals = self.eng.eval(f"[{expr}]", nargout=1)
+
+        output = dict(zip(names, np.array(vals).flatten().tolist()))
 
         self.time += Dt
         return output
+
+    # ------------------------------------------------------------------
+    def _probe_simulink_signals(self) -> list:
+        """
+        Probe simOut for all F1–F20 and E1–E20 and return those that exist.
+        Uses isfield() / exist checks so MATLAB never prints error messages
+        for missing fields. Tries timeseries format first, then plain array.
+        Called once after the first sim(); result cached in _simulink_signal_names.
+        """
+        candidates = [f"F{i}" for i in range(1, 21)] + [f"E{i}" for i in range(1, 21)]
+        found = []
+        for n in candidates:
+            # Check existence silently before accessing — avoids MATLAB printing
+            # "Unrecognized field name" errors to stdout for missing signals.
+            exists = bool(self.eng.eval(
+                f"isfield(simOut, '{n}') || "
+                f"(isobject(simOut) && isprop(simOut, '{n}'))",
+                nargout=1,
+            ))
+            if exists:
+                found.append(n)
+        return found
 
     # ------------------------------------------------------------------
     def terminate(self):
@@ -575,9 +597,9 @@ if __name__ == "__main__":
     graphics working? (yes)
     """
 
-    method        = "simulink"   # change to: python | matlab | simulink | simulink_fmu
-    IsPrecomputed = True
-    RebuildFMU    = False   # simulink_fmu only
+    method        = "simulink_fmu"   # change to: python | matlab | simulink | simulink_fmu
+    IsPrecomputed = False
+    RebuildFMU    = True   # simulink_fmu only
     ShowSimulink  = False   # simulink only: open block-diagram + scopes graphically
 
     test_instantaneous_state = ((np.arange(1945) + 1) * 10).astype(float)
