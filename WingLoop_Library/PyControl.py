@@ -773,7 +773,7 @@ if __name__ == "__main__":
     graphics working? (yes)
     """
 
-    method        = "simulink_fmu"   # change to: python | matlab | simulink | simulink_fmu
+    method        = "matlab"   # change to: python | matlab | simulink | simulink_fmu
     IsPrecomputed = True
     RebuildFMU    = True   # simulink_fmu only
     ShowSimulink  = False   # simulink only: open block-diagram + scopes graphically

@@ -216,6 +216,7 @@ class WingLoop:
                 refresh_interval = plot_refreshtime,
                 figsize = plot_size
             )
+        self.writingtime = 0.0
 
 
     def Load_Files(self,filename):
@@ -282,7 +283,7 @@ class WingLoop:
         note that time.sleep() are needed lower in the code if "none" is used
         """
         # the best option for time speed is overwrite
-        state_file_write_options = "overwrite"
+        state_file_write_options = "delete"
         
         if state_file_write_options != "none":
             if state_file_write_options == "delete":
@@ -323,7 +324,8 @@ class WingLoop:
                 stdout, stderr , time_taken= self.ASW_handler.send_writefile_command_and_receive(filename="output",  
                                                                                                     custom_timer=custom_timer,
                                                                                                     append_or_overwrite="O")
-
+        starttime = time.time()
+        # the following line updates the perceived information
         self.WingLoop_LogFile = read_aswing_file("output", 
                                                     self.WingLoop_LogFile, 
                                                     self.rename_map,
@@ -331,11 +333,11 @@ class WingLoop:
         # plot things now, if needed, or update the plot
         if self.WingLoop_IsPlotting and self.LivePlot:
             self.WingLoop_Liveplot.update(self.WingLoop_LogFile)
-
         x_state = self.WingLoop_LogFile["ModelStates"][-1] # only get the last available element
-
+        self.writingtime += (time.time()-starttime)
         output = self.PyControl.PyControl_DoControllerStep(instantaneous_state = x_state, Dt = Dt_aswing*K_aswing)
         print(output)
+
         # create the file for the next iteration engine and flap deflections
         python2text("input",output)
 
@@ -436,14 +438,15 @@ class WingLoop:
         if self.print_output:
             print("Final Counter",self.count)
 
-        self.WingLoop_Liveplot.update(self.WingLoop_LogFile) #this will be the first plot if self.LivePlot = False
-        print("SIMULATION ENDED, Press Enter to continue")
-        input()
             
-    def Outputting_The_State_File(self,statefile_filename):
+    def Outputting_The_State_File(self,statefile_filename=None):
         stdout, stderr = self.ASW_handler.send_command_and_receive("\n")
         stdout, stderr = self.ASW_handler.send_command_and_receive("HSAV")
+        print("TEST",self.WingLoop_LogFile["ModelName"])
+        if statefile_filename == None:
+            statefile_filename = self.WingLoop_LogFile["ModelName"]+".state"
         stdout, stderr = self.ASW_handler.send_command_and_receive(statefile_filename,custom_timer=1)
+        print("[Outputting_The_State_File] Saved → "+statefile_filename)
 
 ### OUTPUT THE RESULTS
 
@@ -466,7 +469,10 @@ class WingLoop:
         #    if os.path.exists(timeseries+".t"):
         #        os.remove(timeseries+".t")
         #    stdout, stderr = self.ASW_handler.send_command_and_receive(timeseries+".t",custom_timer=1)
-
+        print("writingtime",self.writingtime)
+        self.WingLoop_Liveplot.update(self.WingLoop_LogFile) #this will be the first plot if self.LivePlot = False
+        print("SIMULATION ENDED, Press Enter to continue")
+        input()
 
         ## Exporting the data 
         if custom_filename == None:

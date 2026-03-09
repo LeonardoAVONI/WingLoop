@@ -160,6 +160,9 @@ class ASWINGLivePlotter:
         self._div_spans: list = []       # list of axvspan patches, per axes key
         self._warn_text = None           # figure-level warning Text artist
 
+        self._ylims      = {}
+        self._last_spans = []
+
     # ── public API ───────────────────────────────────────────────────────────
 
     def update(self, data_dict: dict, force_draw: bool = False):
@@ -207,8 +210,13 @@ class ASWINGLivePlotter:
                 continue
             self._lines[key].set_data(t_arr[:n], v_arr[:n])
             ax = self._axes[key]
-            ax.relim()
-            ax.autoscale_view(scalex=False)   # keep x fixed to total_sim_time
+            v_min, v_max = float(v_arr[:n].min()), float(v_arr[:n].max())
+            margin = (v_max - v_min) * 0.05 if (v_max - v_min) > 0 else 0.1
+            new_lim = [v_min - margin, v_max + margin]
+            old_lim = self._ylims.get(key)
+            if old_lim is None or new_lim[0] < old_lim[0] or new_lim[1] > old_lim[1]:
+                ax.set_ylim(new_lim)
+                self._ylims[key] = new_lim
 
         # ── convergence overlays ──────────────────────────────────────────
         self._update_convergence_overlays(data_dict, t_arr)
@@ -216,9 +224,12 @@ class ASWINGLivePlotter:
         # ── throttle redraws ──────────────────────────────────────────────
         now = time.time()
         if force_draw or (now - self._last_draw_time) >= self.refresh_interval:
+            #self._fig.canvas.draw_idle()
+            #plt.pause(0.001)
             self._fig.canvas.draw_idle()
-            plt.pause(0.001)
+            self._fig.canvas.flush_events()
             self._last_draw_time = now
+
 
     def export(self, filepath: str = "aswing_results.pdf"):
         """
@@ -257,6 +268,11 @@ class ASWINGLivePlotter:
             return
 
         spans = _compute_diverged_spans(t_arr, np.array(conv_vals, dtype=bool))
+
+        # ── skip all patch surgery if nothing changed ─────────────────────
+        if spans == self._last_spans:
+            return
+        self._last_spans = spans
 
         # ── remove previous patches ───────────────────────────────────────
         for patch in self._div_spans:
@@ -327,10 +343,10 @@ class ASWINGLivePlotter:
             ax = fig.add_subplot(gs_left[i, 0])
             unit = _get_unit(data_dict, key)
             ylabel = f"{key} [{unit}]" if unit else key
-            ax.set_ylabel(ylabel, fontsize=7)
-            ax.set_xlabel("Time [s]", fontsize=7)
+            ax.set_ylabel(ylabel, fontsize=9)
+            
             ax.set_xlim(0, self.total_sim_time)
-            ax.tick_params(labelsize=7)
+            ax.tick_params(labelsize=9)
             ax.grid(True, linestyle="--", alpha=0.5)
 
             colour = self._COLOURS[i % len(self._COLOURS)]
@@ -338,6 +354,7 @@ class ASWINGLivePlotter:
 
             self._axes[key]  = ax
             self._lines[key] = line
+        ax.set_xlabel("Time [s]", fontsize=9)
 
         # ── right panel ───────────────────────────────────────────────────
         for j, key in enumerate(self._actuation_keys):
@@ -345,10 +362,10 @@ class ASWINGLivePlotter:
             unit = _get_unit(data_dict, key)
             label_prefix = "Flap" if key.startswith("F") else "Engine"
             ylabel = f"{label_prefix} {key[1:]} [{unit}]" if unit else f"{label_prefix} {key[1:]}"
-            ax.set_ylabel(ylabel, fontsize=7)
-            ax.set_xlabel("Time [s]", fontsize=7)
+            ax.set_ylabel(ylabel, fontsize=9)
+            
             ax.set_xlim(0, self.total_sim_time)
-            ax.tick_params(labelsize=7)
+            ax.tick_params(labelsize=9)
             ax.grid(True, linestyle="--", alpha=0.5)
 
             colour = self._COLOURS[(j + n_left) % len(self._COLOURS)]
@@ -356,14 +373,15 @@ class ASWINGLivePlotter:
 
             self._axes[key]  = ax
             self._lines[key] = line
+        ax.set_xlabel("Time [s]", fontsize=9)
 
         # ── column titles ─────────────────────────────────────────────────
         if n_left:
             fig.text(0.27, 0.91, "State Variables",
-                     ha="center", fontsize=9, fontweight="bold")
+                     ha="center", fontsize=12, fontweight="bold")
         if n_right:
             fig.text(0.755, 0.91, "Actuation Channels",
-                     ha="center", fontsize=9, fontweight="bold")
+                     ha="center", fontsize=12, fontweight="bold")
             
 
 
@@ -371,7 +389,7 @@ class ASWINGLivePlotter:
         self._info_text = fig.text(
             0.01, 0.99, "",
             ha="left", va="top",
-            fontsize=8, fontfamily="monospace",
+            fontsize=9, fontfamily="monospace",
             bbox=dict(boxstyle="round,pad=0.3", facecolor="lightyellow",
                       edgecolor="gray", alpha=0.8)
         )
@@ -389,6 +407,12 @@ class ASWINGLivePlotter:
 
         plt.ion()          # interactive mode → non-blocking show
         plt.show()
+        # Push the window behind other windows so it never steals focus
+        # during live updates. Works on TkAgg; silently ignored elsewhere.
+        try:
+            self._fig.canvas.manager.window.lower()
+        except AttributeError:
+            pass
         self._fig = fig
 
 

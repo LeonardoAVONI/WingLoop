@@ -135,51 +135,5 @@ classdef UserController < handle
             obj.workspace_matrix = obj.workspace_scalar * eye(5);
         end
 
-        % ------------------------------------------------------------------
-        function output = step(obj, instantaneous_state, Dt)
-            %{
-            step  Execute one controller timestep.
-            
-             Called once per simulation step by PyControl.  Increments
-             simulationtime, applies control logic using the workspace
-             properties and the current state, and returns a struct of
-             output signals.  Add or remove output fields (F1–F20, E1–E20)
-             to match the application; PyControl discovers them automatically.
-            
-             Parameters
-             ----------
-             instantaneous_state : double column vector
-                 Current plant state, length N.
-             Dt : double
-                 Timestep duration in seconds.
-            
-             Returns
-             -------
-             output : struct
-                 Struct whose fields are the controller output signals.
-            %}
-
-            obj.simulationtime = obj.simulationtime + Dt;
-
-            fprintf('[MATLAB step] Using:\n');
-            fprintf('   scalar  = %.4f\n', obj.workspace_scalar);
-            fprintf('   string  = %s\n',   obj.workspace_string);
-            fprintf('   matrix size = %d x %d\n', size(obj.workspace_matrix));
-            fprintf('   matrix =\n');
-            disp(obj.workspace_matrix);
-
-            testvalue = instantaneous_state(1:6);
-
-            output = struct( ...
-                'F1',  1,...%testvalue(1) + obj.workspace_scalar, ...
-                'F2',  2,...%testvalue(2) + obj.workspace_scalar, ...
-                'F3',  3,...%testvalue(3), ...
-                'F4',  4,...%testvalue(4), ...
-                'E1',  5,...%testvalue(5), ...
-                'E2',  6,...%testvalue(6), ...
-                'E15', obj.simulationtime  ...
-            );
-        end
-
     end % methods
 end % classdef
