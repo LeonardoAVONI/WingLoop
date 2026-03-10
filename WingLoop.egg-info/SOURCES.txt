@@ -14,3 +14,5 @@ WingLoop_Library/WingLoop.py
 WingLoop_Library/__init__.py
 WingLoop_Library/test_files/test_controllers/python_database_build.py
 WingLoop_Library/test_files/test_controllers/python/python_test_controller.py
+WingLoop_Library/wingloop_testrun/wingloop_testrun.py
+WingLoop_Library/wingloop_testrun/python_controller/python_test_controller.py

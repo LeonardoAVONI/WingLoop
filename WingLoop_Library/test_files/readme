@@ -1,8 +1,0 @@
-This folder contains the following files:
-- ASWING_test_output: text-like ASWING output, used to pass data from ASWING to WingLoop
-- matlab_test_controller.m: very simple matlab controller used with WingLoop  
-- simulink_test_controller.slx: very simple simulink controller used with WingLoop
-- python_test_controller.py: very simple matlab controller used with WingLoop
-
-DA COMPLETARE E RIFARE l'APPLICAZIONE (files sono stati cambiati)
-E mettere dentro WingLoop la ASWING Director (non update il contenuto di 10_..)

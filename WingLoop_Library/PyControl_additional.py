@@ -1,4 +1,37 @@
+# =============================================================================
+# WingLoop — PyControl_additional
+# =============================================================================
+# Copyright (c) 2024-2026 Leonardo Avoni (avonileonardo@gmail.com)
+#
+# This file is part of WingLoop.
+# WingLoop is licensed under CC BY-NC-SA 4.0 (Non-Commercial use only).
+# Full license: https://creativecommons.org/licenses/by-nc-sa/4.0/
+#
+# For commercial use, contact the author: avonileonardo@gmail.com
+#
+# If you use WingLoop in academic work, please cite:
+#   Avoni et al., "Enhancing ASWING Flight Dynamics Simulations with
+#   Closed-Loop Control for Flexible Aircraft," AIAA 2025-3425.
+#   https://arc.aiaa.org/doi/10.2514/6.2025-3425
+# =============================================================================
 
+"""
+====================================================================================
+WingLoop Library — PyControl_additional
+additional elements previously written
+====================================================================================
+
+Author: Leonardo Avoni
+Email: avonileonardo@gmail.com
+Initial release: 08 Nov 2024
+Last modified: 08 Mar 2026
+
+------------------------------------------------------------------------------------
+Overview
+------------------------------------------------------------------------------------
+Some elements were already written in WingLoop 1.0, and are pasted here
+
+"""
 
 class PIDController:
     """ 

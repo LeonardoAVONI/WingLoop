@@ -1,22 +1,166 @@
+# =============================================================================
+# WingLoop — PyControl_IO
+# =============================================================================
+# Copyright (c) 2024-2026 Leonardo Avoni (avonileonardo@gmail.com)
+#
+# This file is part of WingLoop.
+# WingLoop is licensed under CC BY-NC-SA 4.0 (Non-Commercial use only).
+# Full license: https://creativecommons.org/licenses/by-nc-sa/4.0/
+#
+# For commercial use, contact the author: avonileonardo@gmail.com
+#
+# If you use WingLoop in academic work, please cite:
+#   Avoni et al., "Enhancing ASWING Flight Dynamics Simulations with
+#   Closed-Loop Control for Flexible Aircraft," AIAA 2025-3425.
+#   https://arc.aiaa.org/doi/10.2514/6.2025-3425
+# =============================================================================
+
 """
 ====================================================================================
-Text2Python_Library, Package Version
-
-Author: Leonardo AVONI
-Date: 25/10/2024
-Email: avonileonardo@gmail.com
-
-Last modified:  29/05/2025
-
+WingLoop Library — PyControl_IO
+Input / Output Utilities for ASWING-WingLoop Data Exchange
 ====================================================================================
 
-Description:
-Within the WingLoop_Library, this function provides functions used mainly by any WingLoop 
-instance. Refer to WingLoop th check which function is used where
-ATTENTION: the Op.Point variable is not iterated beyond 999, as it is reported as ***
+Author: Leonardo Avoni
+Email: avonileonardo@gmail.com
+Initial release: 25 Oct 2024
+Last modified: 10 Mar 2026
 
+------------------------------------------------------------------------------------
+Overview
+------------------------------------------------------------------------------------
+PyControl_IO provides input/output utilities used by the WingLoop framework to
+interface PyControl and other libraries with ASWING program.
 
-Sometimes, if the "input" files for WingLoop are badly written, they are not recognized by ASWING    
+The module is responsible for:
+
+    • Parsing ASWING output files
+    • Building and maintaining simulation data dictionaries
+    • Exporting simulation results to structured formats (JSON)
+    • Importing previously saved simulation datasets
+    • Writing control command files compatible with ASWING
+    • Providing debugging and diagnostic summaries
+
+These utilities allow WingLoop to convert ASWING text-based outputs into
+structured Python objects suitable for analysis, control algorithms, and
+visualization.
+
+------------------------------------------------------------------------------------
+Core Data Structure
+------------------------------------------------------------------------------------
+Most functions operate on a **simulation data dictionary** with the structure:
+
+    data_dict = {
+        "ModelName": str,
+        "ModelStates": list | numpy.ndarray,
+        "ModelVariables": {
+            variable_name: {
+                "values": list,
+                "unit": str | None,
+                "latex": str | None
+            }
+        }
+    }
+
+This structure stores all time-series variables extracted from ASWING output
+files, including aircraft states, aerodynamic quantities, and control signals.
+
+------------------------------------------------------------------------------------
+Main Functionalities
+------------------------------------------------------------------------------------
+
+initialize_data_dict(...)
+    Creates the base simulation dictionary used to store parsed variables.
+
+read_aswing_file(...)
+    Parses an ASWING output file and appends the extracted values to the
+    provided data dictionary.
+
+python2text(...)
+    Generates ASWING-compatible time-history control files from Python
+    control dictionaries.
+
+export_data_dict(...)
+    Serializes a simulation dictionary to a human-readable JSON file.
+
+import_data_dict(...)
+    Restores a previously exported JSON dataset and reconstructs the
+    dictionary structure used by WingLoop.
+
+print_aswing_summary(...)
+    Displays a formatted summary of parsed variables and state history.
+
+------------------------------------------------------------------------------------
+Utility Functions
+------------------------------------------------------------------------------------
+
+seconds2hms(...)
+    Converts a time expressed in seconds into hours, minutes, and seconds.
+
+scientific_to_decimal(...)
+    Converts scientific notation strings into decimal representation.
+    Useful when exporting values to environments that do not handle
+    scientific notation consistently (e.g., MATLAB parsing issues).
+
+------------------------------------------------------------------------------------
+ASWING Parsing Notes
+------------------------------------------------------------------------------------
+
+• ASWING output files are text-based and not strictly structured, which
+  requires robust parsing strategies.
+
+• Variable names may contain spaces (e.g., "earth X", "Dyn.Pr."), so
+  parsing uses dynamic regular expressions constructed from requested
+  variable names.
+
+• The "Op.Point" variable is not iterated beyond 999 because ASWING
+  prints values above this threshold as "***".
+
+• Incorrectly formatted WingLoop input files may not be recognized
+  correctly by ASWING.
+
+------------------------------------------------------------------------------------
+Testing
+------------------------------------------------------------------------------------
+The module includes a standalone test block demonstrating:
+
+    • dictionary initialization
+    • ASWING file parsing
+    • control-file generation
+    • JSON export / import of simulation datasets
+
+Run directly:
+
+    python PyControl_IO.py
+
+------------------------------------------------------------------------------------
+Role within WingLoop
+------------------------------------------------------------------------------------
+PyControl_IO acts as the **data interface layer** between ASWING simulations and
+the WingLoop Python ecosystem.
+
+Typical workflow:
+
+    ASWING output file test_file
+        ↓
+    read_aswing_file(test_file)
+        ↓
+    structured data dictionary is updated
+        ↓
+    WingLoop operation happen
+        visualization (PyControl_LivePlotter)
+        control algorithms (PyControl)
+        PyControl defines the new control signals
+    New control signals are available
+        ↓
+    python2text(new_control_signals)
+        this writes the input file
+        ↓
+    the input file is fed back to ASWING
+    
+    At the end of the simulation:   
+        analysis / export
+
 ====================================================================================
 """
 
@@ -308,7 +452,7 @@ def export_data_dict(data_dict, filepath):
 
     n_vars   = len(data_dict.get("ModelVariables", {}))
     n_states = len(data_dict.get("ModelStates", []))
-    print(f"[export_data_dict] Saved → {filepath}  "
+    print(f"[PyControl_IO] Saved → {filepath}  "
           f"({n_vars} variables, {n_states} state snapshot(s))")
     return filepath
 
@@ -356,7 +500,7 @@ def import_data_dict(filepath):
 
     n_vars   = len(data_dict.get("ModelVariables", {}))
     n_states = len(data_dict.get("ModelStates", []))
-    print(f"[import_data_dict] Loaded ← {filepath}  "
+    print(f"[PyControl_IO] Loaded ← {filepath}  "
           f"({n_vars} variables, {n_states} state snapshot(s))")
     return data_dict
 

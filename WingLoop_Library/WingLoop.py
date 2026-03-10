@@ -1,52 +1,115 @@
+# =============================================================================
+# WingLoop
+# =============================================================================
+# Copyright (c) 2024-2026 Leonardo Avoni (avonileonardo@gmail.com)
+#
+# This file is part of WingLoop.
+# WingLoop is licensed under CC BY-NC-SA 4.0 (Non-Commercial use only).
+# Full license: https://creativecommons.org/licenses/by-nc-sa/4.0/
+#
+# For commercial use, contact the author: avonileonardo@gmail.com
+#
+# If you use WingLoop in academic work, please cite:
+#   Avoni et al., "Enhancing ASWING Flight Dynamics Simulations with
+#   Closed-Loop Control for Flexible Aircraft," AIAA 2025-3425.
+#   https://arc.aiaa.org/doi/10.2514/6.2025-3425
+# =============================================================================
 """
 ====================================================================================
-WingLoop, Package Version
-
-Author: Leonardo AVONI
-Date: 25/10/2024
-Email: avonileonardo@gmail.com
-
-Last modified: 29/05/2025
+WingLoop - Aeroservoelastic Control Interface for ASWING
+Version 2.0
 ====================================================================================
 
-Description:
-    This code is made for aeroservoelastic control of aircraft modeled using ASWING.
-    It is meant as a way to extend ASWING's control capabilities using the toolboxes
-    available in Python. It is also possible, although not implemented, to link Python
-    with Matlab, thus implementing the methods available in Matlab.
-    
-    This Python code is made to be used with Aswing_Director library, used to send commands 
-    to ASWING from Python. This code also uses functions from the following classes:
-        Control_Library.PyControl: where all the timeseries and control laws to be used are stored
-        Text2Python_Library: used to convert the python data to text data accessible by ASWING, 
-            and vice-versa
-    
-    The WingLoop class comes with several methods:
-        -Launch_ASWING: used to start ASWING with the appropriate parameters, like the file used and 
-            the ASWING version used, and other parameters
-        -Load_Files: used to load the various files needed by ASWING. The files are loaded by type according
-            to their extension (.asw will be geometry, .state will be a state...)
-        -Deactivate_Graphics: specific list of instructions for ASWING, to stop if from showing graphic 
-            output. ASWING can still save images if needed, but those are not showed to the user
-        -Time_Transient_Simulation: used to launch a time transient simulation. This function 
-            calls Perform_K_iterations
-        -Outputting_The_Results: plots and/or writes timeseries
-        -Closing_WingLoop: does what it says
+Author: Leonardo Avoni
+Email: avonileonardo@gmail.com
+Initial release: 25 Oct 2024
+Last modified: 10 Mar 2026
 
-    More details are found in each function's description
+------------------------------------------------------------------------------------
+Overview
+------------------------------------------------------------------------------------
+WingLoop provides a Python interface for performing aeroservoelastic control
+simulations of aircraft modeled in ASWING. The goal of the package is to extend
+ASWING native control capabilities by leveraging the scientific computing and
+control libraries available in Python.
 
-How To Install
-    Position yourself in the folder upstream of WingLoop_Library, i.e. the 
-    folder containing this WingLoop_Library.py code, and the 
-    Text2Python_Library.py, Control_Library.py codes.
-    Alongside that folder there should be the pyproject.toml
-    Open a terminal, and write "/usr/bin/python3 -m pip install --user -e ."
-    This will install it in Python, in editable mode (if you modify the code it 
-    will impact the package behavior)
-    
-    Also: for VSCode to identify the imports: Add in the settings.json 
-    (File>Preferences>Settings, then top right corner)file the following:
-    "python.analysis.extraPaths": ["~/Bureau/01 Github/02_WingLoop/"]
+The software communicates with ASWING through the Aswing_Director interface,
+allowing Python scripts to send commands, retrieve simulation data, and apply
+control laws during time-transient simulations.
+
+For more information on how to use WingLoop, refer to the example case, 
+stored in wingloop_testrun folder
+
+------------------------------------------------------------------------------------
+Dependencies
+------------------------------------------------------------------------------------
+WingLoop relies on the following internal modules:
+
+• Aswing_Director
+    Handles communication between Python and the ASWING executable.
+
+• PyControl
+    Contains control strategies, time-series storage, and controller execution.
+
+• PyControl_IO / Text2Python utilities
+    Convert data between Python structures and the text format required by ASWING.
+
+• PyControl_Plot
+    Provides real-time plotting and post-processing of simulation data.
+
+------------------------------------------------------------------------------------
+Main Class
+------------------------------------------------------------------------------------
+WingLoop
+
+Primary responsibilities:
+    • Launch and manage the ASWING simulation environment
+    • Exchange state and control data between ASWING and Python/Matlab/Simulink control laws
+    • Execute control laws during time-transient simulations
+    • Record simulation time series
+    • Provide live visualization and data export
+
+------------------------------------------------------------------------------------
+Main Methods
+------------------------------------------------------------------------------------
+
+Initialization / Setup
+    Launch_ASWING()
+    Launch_WingLoop_Control()
+    InitializePlot()
+    Load_Files()
+    Deactivate_Graphics()
+
+Simulation
+    Time_Transient_Simulation()
+    Performing_K_iterations_ASWING()
+
+Output
+    Outputting_The_State_File()
+    Outputting_The_Results()
+
+Shutdown
+    Closing_WingLoop()
+
+------------------------------------------------------------------------------------
+Future Improvements
+------------------------------------------------------------------------------------
+
+Planned features:
+    • Implement Setting_Trimming_Point_Constraints()
+    • Implement Define_Sim_Settings()
+    • Improve time synchronization between:
+        - Python
+        - MATLAB
+        - Simulink
+        - FMU simulations (time is different by Dt amount)
+
+------------------------------------------------------------------------------------
+Notes
+------------------------------------------------------------------------------------
+Trimming conditions, initial aircraft states, and simulation constraints must
+currently be generated externally and loaded through a `.state` file before
+running a transient simulation.
 
 ====================================================================================
 """
@@ -64,7 +127,7 @@ import time
 from .Aswing_Director import *
 from .PyControl import *
 from .PyControl_Plot import *
-from .PyControl_Text2Python import *
+from .PyControl_IO import *
 #from .PyControl_additional import *
 
 class WingLoop:
@@ -336,7 +399,7 @@ class WingLoop:
         x_state = self.WingLoop_LogFile["ModelStates"][-1] # only get the last available element
         self.writingtime += (time.time()-starttime)
         output = self.PyControl.PyControl_DoControllerStep(instantaneous_state = x_state, Dt = Dt_aswing*K_aswing)
-        print("[WingLoop] : step = ", self.count,"; i+1 control:",output)
+        print("[WingLoop] step = ", self.count,"; i+1 control:",output)
 
         # create the file for the next iteration engine and flap deflections
         python2text("input",output)
@@ -424,7 +487,7 @@ class WingLoop:
         while not (self.count + K >= N):
             # performing a number K of iteration (write output of the previous state, obtain the control command, send to aswing, perform K aswing iterations)
             if self.print_output:
-                print("Internal iterations: from", self.count, " to ",self.count+K, " (step of ", K,")")
+                print("[WingLoop] iterations: from", self.count, " to ",self.count+K, " (step of ", K,")")
             self.Performing_K_iterations_ASWING(Dt_aswing=Dt, K_aswing=K)
             #incrementing the counter
             self.count += K
@@ -436,17 +499,18 @@ class WingLoop:
             self.Performing_K_iterations_ASWING(Dt_aswing=Dt, K_aswing=N-self.count)
             self.count += N-self.count
         if self.print_output:
-            print("Final Counter",self.count)
+            print("[WingLoop] Final Counter",self.count)
 
             
     def Outputting_The_State_File(self,statefile_filename=None):
         stdout, stderr = self.ASW_handler.send_command_and_receive("\n")
         stdout, stderr = self.ASW_handler.send_command_and_receive("HSAV")
-        print("TEST",self.WingLoop_LogFile["ModelName"])
         if statefile_filename == None:
             statefile_filename = self.WingLoop_LogFile["ModelName"]+".state"
+        else:
+            statefile_filename = statefile_filename+".state"
         stdout, stderr = self.ASW_handler.send_command_and_receive(statefile_filename,custom_timer=1)
-        print("[Outputting_The_State_File] Saved → "+statefile_filename)
+        print("[WingLoop] Saved → "+statefile_filename)
 
 ### OUTPUT THE RESULTS
 
@@ -469,9 +533,10 @@ class WingLoop:
         #    if os.path.exists(timeseries+".t"):
         #        os.remove(timeseries+".t")
         #    stdout, stderr = self.ASW_handler.send_command_and_receive(timeseries+".t",custom_timer=1)
-        print("writingtime",self.writingtime)
+        print("[WingLoop] writingtime",self.writingtime)
+
         self.WingLoop_Liveplot.update(self.WingLoop_LogFile) #this will be the first plot if self.LivePlot = False
-        print("SIMULATION ENDED, Press Enter to continue")
+        print("[WingLoop] Simulation Ended, Press Enter to continue")
         input()
 
         ## Exporting the data 
@@ -490,7 +555,7 @@ class WingLoop:
         """
 
         ### FINISHIING THE PROGRAM
-        print("Ending WingLoop")
+        print("[WingLoop] Ending WingLoop...")
         time.sleep(0.5)
         # removing the communication files
         if removefiles:
@@ -501,6 +566,8 @@ class WingLoop:
 
         stdout, stderr = self.ASW_handler.send_command_and_receive("\n")  # go back to main menu
         # Quit Aswing
+        time.sleep(0.5)
         self.ASW_handler.quit_and_close_aswing()
+        print("[WingLoop] Closed WingLoop correctly!")
 
 

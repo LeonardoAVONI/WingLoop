@@ -1,99 +1,166 @@
+# =============================================================================
+# WingLoop — PyControl
+# =============================================================================
+# Copyright (c) 2024-2026 Leonardo Avoni (avonileonardo@gmail.com)
+#
+# This file is part of WingLoop.
+# WingLoop is licensed under CC BY-NC-SA 4.0 (Non-Commercial use only).
+# Full license: https://creativecommons.org/licenses/by-nc-sa/4.0/
+#
+# For commercial use, contact the author: avonileonardo@gmail.com
+#
+# If you use WingLoop in academic work, please cite:
+#   Avoni et al., "Enhancing ASWING Flight Dynamics Simulations with
+#   Closed-Loop Control for Flexible Aircraft," AIAA 2025-3425.
+#   https://arc.aiaa.org/doi/10.2514/6.2025-3425
+# =============================================================================
+
 """
 ====================================================================================
 WingLoop Library — PyControl
-
-Author: Leonardo AVONI
-Date: 08/11/2024
-Email: avonileonardo@gmail.com
-
-Last modified: 08/03/2026
-
+Unified Controller Interface for WingLoop
 ====================================================================================
 
-Description:
-    Unified, step-by-step controller wrapper for the WingLoop aeroservoelastic
-    simulation framework.  The backend is selected automatically from the extension
-    of the supplied control file:
+Author: Leonardo Avoni
+Email: avonileonardo@gmail.com
+Initial release: 08 Nov 2024
+Last modified: 08 Mar 2026
 
-        .py   → python        Pure Python UserController class.
-        .m    → matlab        MATLAB UserController class via matlab.engine.
-        .slx  → simulink      Simulink model stepped via eng.sim() + ExternalInput.
-        .fmu  → simulink_fmu  FMU (Co-Simulation, FMI 2.0) exported from Simulink,
-                              stepped via fmpy.
+------------------------------------------------------------------------------------
+Overview
+------------------------------------------------------------------------------------
+PyControl provides a unified interface for executing control algorithms within the
+WingLoop aeroservoelastic simulation framework.
 
-    All four backends share the same call interface:
+The module acts as a controller wrapper that allows different controller
+implementations to be executed during a WingLoop simulation step. The
+backend is automatically selected based on the extension of the supplied
+control file.
 
-        ctrl   = PyControl(control_directory, control_file, ...)
-        output = ctrl.PyControl_DoControllerStep(state, Dt=0.01)
-        ctrl.terminate()
+Supported controller backends:
 
-    where `output` is a plain Python dict whose keys are the controller output
-    signal names (e.g. {'F1': ..., 'F2': ..., 'E1': ...}).
+    .py   → Python controller
+    .m    → MATLAB controller (via matlab.engine)
+    .slx  → Simulink model stepped through the MATLAB engine
+    .fmu  → FMU (FMI 2.0 Co-Simulation) exported from Simulink and executed via FMPy
 
-──────────────────────────────────────────────────────────────────────────────────
-INPUT FILE CONTRACTS
-──────────────────────────────────────────────────────────────────────────────────
+All controller types share the same runtime interface, allowing WingLoop to
+interact with them in a consistent way.
 
-python (.py):
-    Must define a class named UserController with:
-      - __init__(self, precomputed_file_path: str) — loads or computes init data.
-      - step(self, instantaneous_state, Dt) → dict — returns output signal dict.
+------------------------------------------------------------------------------------
+Typical Usage
+------------------------------------------------------------------------------------
 
-matlab (.m):
-    Must define a MATLAB class named UserController with an equivalent step()
-    method.  Precomputed data loading / default computation is handled inside the
-    class constructor.
+    ctrl = PyControl(control_directory, control_file, ...)
+    output = ctrl.PyControl_DoControllerStep(state, Dt=0.01)
+    ctrl.terminate()
 
-simulink (.slx):
-    Requires a UserController.m alongside the .slx.  The three workspace properties
-    of UserController (workspace_scalar, workspace_string, workspace_matrix) are
-    pushed into MATLAB's base workspace before each sim() call.  Output signals
-    (F1–F20, E1–E20) must be saved to the SimulationOutput object
-    (ReturnWorkspaceOutputs=on).
+Where:
+    state   : current aircraft state vector
+    Dt      : simulation timestep
+    output  : dictionary of controller outputs (e.g. {'F1': ..., 'E1': ...})
 
-simulink_fmu (.fmu):
-    Requires the .fmu binary.  If rebuild_fmu=True, also requires the matching
-    .slx alongside the .fmu (same stem, same directory).
+------------------------------------------------------------------------------------
+Controller Output Convention
+------------------------------------------------------------------------------------
+Controller outputs are returned as a Python dictionary whose keys correspond
+to actuator or control signals.
 
-──────────────────────────────────────────────────────────────────────────────────
-HOW WORKSPACE VARIABLES WORK PER BACKEND
-──────────────────────────────────────────────────────────────────────────────────
+Typical signals include:
 
-python / matlab:
-    Precomputed data (if provided) is passed as a file path to UserController's
-    constructor.  If the path is empty or missing, the controller computes its own
-    defaults.
+    F1 - F20 : control surface / actuator commands
+    E1 - E20 : engine or auxiliary control outputs
 
-simulink (.slx):
-    UserController.m is instantiated via the MATLAB engine and its three properties
-    are pushed into MATLAB's BASE workspace via assignin('base',...).  Simulink
-    reads them from there at sim() time — exactly as if you had typed them in the
-    MATLAB command window.
+The actual outputs are discovered dynamically depending on the controller
+implementation.
 
-simulink_fmu (.fmu):
-    An FMU exported from Simulink bakes the Base Workspace variable VALUES into the
-    binary at export time (they become FMI start values, not live parameters).
-    After export there is NO live connection back to MATLAB's base workspace.
+------------------------------------------------------------------------------------
+Supported Controller Types
+------------------------------------------------------------------------------------
 
-    Two strategies are available:
-    ① rebuild_fmu=True  (recommended when workspace data changes between runs)
-         PyControl pushes UserController values into the MATLAB base workspace,
-         then calls Simulink's exportToFMU2CS to re-export the .fmu, then loads
-         the freshly built FMU.  The rebuilt FMU now carries the correct start
-         values.  Requires the matching .slx in the same directory as the .fmu.
-    ② rebuild_fmu=False (default — use the .fmu as-is)
-         The FMU runs with whatever values were baked in at the last manual export.
-         Faster startup; use when the FMU is already up to date.
+Python Controllers (.py)
+    Must define a class named `UserController` containing:
 
-──────────────────────────────────────────────────────────────────────────────────
+        __init__(self, precomputed_file_path)
+        step(self, instantaneous_state, Dt) → dict
 
-Test cases are available in test_files/test_controllers/
+    The step() method must return a dictionary of output signals.
 
-──────────────────────────────────────────────────────────────────────────────────
-NOTES AND IMPROVEMENTS
-──────────────────────────────────────────────────────────────────────────────────
-Time in simulink_fmu is different than the others
+MATLAB Controllers (.m)
+    Must define a MATLAB class named `UserController` with an equivalent
+    step() method. The controller is executed through the MATLAB engine.
 
+Simulink Models (.slx)
+    Simulink models are stepped using `eng.sim()` with an ExternalInput vector
+    representing the current plant state.
+
+    The model must save output signals to the SimulationOutput object
+    (ReturnWorkspaceOutputs = on).
+
+FMU Controllers (.fmu)
+    Simulink models exported as FMI 2.0 Co-Simulation FMUs are executed through
+    the FMPy library. Input ports correspond to the state vector, while output
+    variables are discovered automatically from the FMU model description.
+
+------------------------------------------------------------------------------------
+Workspace Variable Handling
+------------------------------------------------------------------------------------
+
+Python / MATLAB
+    Precomputed controller data is passed to the UserController constructor
+    through a file path. If no file is provided, the controller initializes its
+    own default parameters.
+
+Simulink (.slx)
+    Workspace variables defined in `UserController.m` are pushed to the MATLAB
+    base workspace before each simulation step so that the Simulink model can
+    access them during execution.
+
+Simulink FMU (.fmu)
+    When a Simulink model is exported as an FMU, workspace variables are baked
+    into the FMU as initial parameter values.
+
+Two execution modes are available:
+
+    rebuild_fmu = True
+        The FMU is re-exported from the corresponding `.slx` file before
+        execution, ensuring that current workspace values are embedded in the
+        binary.
+
+    rebuild_fmu = False
+        The FMU runs with the parameters embedded during the previous export.
+        This results in faster startup but requires manual FMU regeneration if
+        parameters change.
+
+------------------------------------------------------------------------------------
+Main Components
+------------------------------------------------------------------------------------
+
+PyControl
+    Unified controller interface used by WingLoop to execute control laws.
+
+SimulinkFMUController
+    Lightweight wrapper that manages the lifecycle of an FMU exported from
+    Simulink, including instantiation, stepping, and cleanup.
+
+------------------------------------------------------------------------------------
+Testing
+------------------------------------------------------------------------------------
+Example test controllers are available in:
+
+    test_files/test_controllers/
+
+These examples demonstrate controller implementations for all supported
+backends.
+
+------------------------------------------------------------------------------------
+Known Limitations / Future Improvements
+------------------------------------------------------------------------------------
+
+• Time synchronization differences may occur when using the FMU backend
+  compared to Python, MATLAB, or Simulink execution modes.
+
+• Additional diagnostics for FMU parameter synchronization could be added.
 
 ====================================================================================
 """

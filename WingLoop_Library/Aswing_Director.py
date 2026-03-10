@@ -1,12 +1,29 @@
+# =============================================================================
+# WingLoop — Aswing Director
+# =============================================================================
+# Copyright (c) 2024-2026 Leonardo Avoni (avonileonardo@gmail.com)
+#
+# This file is part of WingLoop.
+# WingLoop is licensed under CC BY-NC-SA 4.0 (Non-Commercial use only).
+# Full license: https://creativecommons.org/licenses/by-nc-sa/4.0/
+#
+# For commercial use, contact the author: avonileonardo@gmail.com
+#
+# If you use WingLoop in academic work, please cite:
+#   Avoni et al., "Enhancing ASWING Flight Dynamics Simulations with
+#   Closed-Loop Control for Flexible Aircraft," AIAA 2025-3425.
+#   https://arc.aiaa.org/doi/10.2514/6.2025-3425
+# =============================================================================
+
 """
 ====================================================================================
-Aswing Director, Python Package
+Aswing Director
 
 Author: Leonardo AVONI
 Date: 21/10/2024
 Email: avonileonardo@gmail.com
-
-Last modified: 29/05/2025
+Last modified: 10/03/2026
+Version 8
 
 ====================================================================================
 
@@ -68,6 +85,7 @@ Changelog:
 - Version 8 (03/12/2024): minor comments made
 - Version 9 (17/12/2024): added file length check (>0) in "send_writefile_command_and_receive"
 - Package Version (29/05/2025): the class is made package. Versions are now handled only via GitHub
+- Version 8 (10/03/2026): this version is now included within the WingLoop package
 ====================================================================================
 """
 
@@ -131,7 +149,6 @@ class Aswing_Director:
                     f"Alias '{aswing_alias}' did not resolve to an executable."
                 )
             aswing_path = os.path.dirname(aswing_exec)
-        print(aswing_path)
 
         self.aswing_path = aswing_path
         self.asw_process = None
@@ -173,7 +190,7 @@ class Aswing_Director:
         if filename:
             clean_name = filename.removesuffix(".asw")
             start_command.append(clean_name)
-            print("[aswing director]", clean_name)
+            print("[Aswing_Director]", clean_name)
 
 
         self.asw_process = subprocess.Popen(start_command,
