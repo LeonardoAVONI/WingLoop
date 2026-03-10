@@ -13,6 +13,8 @@ Last modified:  29/05/2025
 Description:
 Within the WingLoop_Library, this function provides functions used mainly by any WingLoop 
 instance. Refer to WingLoop th check which function is used where
+ATTENTION: the Op.Point variable is not iterated beyond 999, as it is reported as ***
+
 
 Sometimes, if the "input" files for WingLoop are badly written, they are not recognized by ASWING    
 ====================================================================================

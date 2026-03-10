@@ -336,7 +336,7 @@ class WingLoop:
         x_state = self.WingLoop_LogFile["ModelStates"][-1] # only get the last available element
         self.writingtime += (time.time()-starttime)
         output = self.PyControl.PyControl_DoControllerStep(instantaneous_state = x_state, Dt = Dt_aswing*K_aswing)
-        print(output)
+        print("[WingLoop] : step = ", self.count,"; i+1 control:",output)
 
         # create the file for the next iteration engine and flap deflections
         python2text("input",output)

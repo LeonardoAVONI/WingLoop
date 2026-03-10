@@ -1,0 +1,46 @@
+# ---------------------------
+# VS Code
+# ---------------------------
+**/.vscode/
+
+# ---------------------------
+# Python
+# ---------------------------
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pytest_cache/
+*.coverage
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# ---------------------------
+# MATLAB / Simulink
+# ---------------------------
+**/slprj/
+**/sccprj/
+**/work/
+**/cache/
+**/codegen/
+
+*.asv        # MATLAB autosave files
+*.m~         # MATLAB backup files
+*.autosave
+
+*.slxc       # Simulink cache
+*.fmu        # FMU exports
+
+*.mldatx
+*.sltest
+*.cvt
+
+# ---------------------------
+# OS files
+# ---------------------------
+.DS_Store
+Thumbs.db

@@ -23,12 +23,12 @@ python_test_controller.py
 
 """
 
-WL_Instance.Launch_WingLoop_Control(cntrl_directory = "matlab_controller", 
-                          cntrl_filename = "UserController.m",
+WL_Instance.Launch_WingLoop_Control(cntrl_directory = "python_controller", 
+                          cntrl_filename = "python_test_controller.py",
                           timestep = Dt,
                           precomputed_filename = None, 
                           rebuild_fmu_file = False,
-                          show_simulink_window = False)
+                          show_simulink_window = True)
 WL_Instance.InitializePlot(liveplot = True,
                           plot_variables= ["earth X", "earth Y", "earth Z", "Heading", "Elev.", "Bank"],
                           plot_sim_time = N*Dt,
