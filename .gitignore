@@ -13,11 +13,11 @@
 *.pytest_cache/
 *.coverage
 *.egg-info/
-dist/
-build/
-.venv/
-venv/
-env/
+**/dist/
+**/build/
+**/.venv/
+**/venv/
+**/env/
 
 # ---------------------------
 # MATLAB / Simulink
