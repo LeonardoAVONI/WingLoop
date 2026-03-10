@@ -6,8 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "WingLoop"
 version = "2.0.0"
 description = "WingLoop control and aircraft simulation tools for ASWING"
-readme = "readme.md"
-requires-python = ">=3.8"
+readme = "README.md"
+requires-python = ">=3.8, <3.13"
 
 authors = [
     { name="Leonardo Avoni" }
