@@ -51,12 +51,12 @@ python wingloop_testrun.py
 The test run simulates the aircraft shown below, featuring 4 groups of control surfaces and two engines.
 
 <div align="center">
-  <img src="docs/wingloop_test_aircraft.png" alt="Test aircraft configuration" width="100%" />
+  <img src="./docs/wingloop_test_aircraft.png" alt="Test aircraft configuration" width="100%" />
   <p><em>Test aircraft configuration</em></p>
 </div>
 
 <div align="center">
-  <img src="docs/wingloop_test.png" alt="WingLoop GUI during a simulation run" width="100%" />
+  <img src="./docs/wingloop_test.png" alt="WingLoop GUI during a simulation run" width="100%" />
   <p><em>WingLoop GUI during a simulation run</em></p>
 </div>
 
