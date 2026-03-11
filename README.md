@@ -1,4 +1,9 @@
-# WingLoop
+
+## WingLoop 2.0
+<div align="center">
+  <img src="./docs/wingLoop_image.jpg" alt="WingLoop GUI during a simulation run" width="100%" />
+</div>
+
 
 **Author:** Leonardo Avoni  
 **Contact:** avonileonardo@gmail.com  
@@ -90,52 +95,18 @@ WingLoop_Library/
 ├── test_files/
 │   ├── readme
 │   ├── test_aircraft/
-│   │   ├── 01_1minus_cosine.gust
-│   │   ├── wingloop_test_aircraft.asw
-│   │   ├── wingloop_test_aircraft.set
-│   │   └── wingloop_test_aircraft.state
 │   ├── test_controllers/
 │   │   ├── matlab/
-│   │   │   ├── precomputed.mat
-│   │   │   └── UserController.m
 │   │   ├── python/
-│   │   │   ├── precomputed_python.npz
-│   │   │   └── python_test_controller.py
 │   │   ├── simulink/
-│   │   │   ├── precomputed.mat
-│   │   │   ├── simulink_test_controller.fmu
-│   │   │   ├── simulink_test_controller.slx
-│   │   │   ├── simulink_test_controller.slxc
-│   │   │   └── UserController.m
-│   │   ├── matlab_simulink_database_build.m
-│   │   ├── python_database_build.py
-│   │   └── readme
 │   └── test_output/
-│       ├── ASWING_test_output_imperial
-│       ├── ASWING_test_output_metric
-│       ├── Expected_Python2Text_Output.txt
-│       └── Expected_Text2Python_Output.txt
 │
 └── wingloop_testrun/
     ├── aswing_geometry/
-    │   ├── 01_1minus_cosine.gust
-    │   ├── wingloop_test_aircraft.asw
-    │   ├── wingloop_test_aircraft, for WingLoop testing.json
-    │   ├── wingloop_test_aircraft, for WingLoop testing.pdf
-    │   ├── wingloop_test_aircraft, for WingLoop testing.state
-    │   ├── wingloop_test_aircraft.pnt
-    │   └── wingloop_test_aircraft.set
     ├── matlab_controller/
-    │   └── UserController.m
     ├── python_controller/
-    │   └── python_test_controller.py
     ├── simulink_controller/
-    │   ├── simulink_test_controller.fmu
-    │   ├── simulink_test_controller.slx
-    │   ├── simulink_test_controller.slxc
-    │   └── UserController.m
-    ├── wingloop_testrun.py
-    └── readme.md
+    └── wingloop_testrun.py
 ```
 
 ---
