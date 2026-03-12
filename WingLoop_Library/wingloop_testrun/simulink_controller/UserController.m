@@ -104,7 +104,7 @@ classdef UserController < handle
             obj.simulationtime = 0.0;
 
             % ── PID gains (mirror of Python: Kp=100, Ki=100, Kd=20) ──────
-            obj.Kp = 1000.0;
+            obj.Kp = 100.0;
             obj.Ki = 100.0;
             obj.Kd = 20.0;
 

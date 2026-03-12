@@ -160,6 +160,10 @@ matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.backends.backend_pdf import PdfPages
+from tkinter import PhotoImage
+from pathlib import Path
+
+_ICON_PATH = Path(__file__).parent / "icon/wingloop_icon.png"
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -596,9 +600,16 @@ class ASWINGLivePlotter:
         # ── finalise figure ───────────────────────────────────────────────
         # self._fig must be set BEFORE any canvas call
         self._fig = fig
-
+        
         plt.ion()
         plt.show()
+        
+        try:
+            from tkinter import PhotoImage as _PhotoImage
+            self._tk_icon = _PhotoImage(file=str(_ICON_PATH))
+            fig.canvas.manager.window.iconphoto(True, self._tk_icon)
+        except Exception:
+            pass
 
         # Initial draw to populate the canvas; background saved for blitting
         fig.canvas.draw()

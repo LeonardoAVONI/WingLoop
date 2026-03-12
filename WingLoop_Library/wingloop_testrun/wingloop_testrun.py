@@ -71,7 +71,7 @@ def main():
         UserController.m
     """
     
-    selector = "fmu"
+    selector = "sim"
     if selector == "sim":
         print("[wingloop_testrun] controller = Simulink")
         control_dir = "simulink_controller"
