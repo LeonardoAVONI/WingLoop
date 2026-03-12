@@ -51,7 +51,7 @@ def main():
 
     #     1) Declare some WingLoop simulation parameters
     Dt=0.01 # timestep [s]
-    N=2 # total iterations to perform
+    N=300 # total iterations to perform
     K=1     # each K iterations we send the ASWING state to PyControl. Leave to 1 if you do not want to add lag
 
     #     2) Open a WingLoop Instance
@@ -133,7 +133,7 @@ def main():
     WL_Instance.Outputting_The_Results(custom_filename = None)     #one can specify custom names 
 
     #     9) Close ASWING and WingLoop
-    WL_Instance.Closing_WingLoop(removefiles = True)
+    WL_Instance.Closing_WingLoop(removefiles = False)
 
 if __name__ == '__main__':
     main()

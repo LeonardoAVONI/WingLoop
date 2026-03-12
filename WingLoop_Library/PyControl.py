@@ -427,6 +427,17 @@ class PyControl:
         if self.method == 'simulink':
             try:
                 self.eng.load_system(self.control_model_name, nargout=0)
+                
+                actual_solver = self.eng.get_param(self.control_model_name, 'Solver', nargout=1)
+                if actual_solver not in ('FixedStepDiscrete',):
+                    import warnings
+                    warnings.warn(
+                        f"[PyControl] SLX solver is '{actual_solver}'. "
+                        f"FMU export requires a fixed-step solver. "
+                        f"Results may differ if model has continuous states.",
+                        UserWarning
+                    )
+                
                 self.eng.set_param(self.control_model_name, 'ReturnWorkspaceOutputs', 'on',   nargout=0)
                 self.eng.set_param(self.control_model_name, 'SignalLogging',           'on',   nargout=0)
                 self.eng.set_param(self.control_model_name, 'StartTime',               '0.0', nargout=0)
@@ -657,106 +668,64 @@ class PyControl:
 
         return output
 
-    # ------------------------------------------------------------------
+
+
+
+
+
+
     def _simulink_step(self, instantaneous_state, Dt: float) -> dict:
-        """
-        Advance the Simulink model by one timestep and return output values.
-
-        Builds a two-row ExternalInput matrix [t0, state; t1, state], pushes it
-        to the MATLAB engine workspace alongside Tstart and Tstop, then calls
-        eng.sim() for the interval [t0, t1].  On the first call,
-        _probe_simulink_signals() is invoked to discover which F/E signal names
-        exist in the SimulationOutput object; the result is cached so discovery
-        only happens once.  The sim() call relies on the model's own saved
-        configuration (SaveOutput, SaveFormat, etc.) without overriding them.
-
-        Parameters
-        ----------
-        instantaneous_state : array-like, shape (N,)
-            Current state vector; held constant across [t0, t1].
-        Dt : float
-            Duration of this simulation step in seconds.
-
-        Returns
-        -------
-        dict
-            {signal_name: float} for every F/E signal found in simOut.
-        """
         state_array = np.array(instantaneous_state, dtype=np.float64).flatten()
-
         t0 = self.time
         t1 = self.time + Dt
 
-        # Build external-input matrix  [t, u_vector; t+Dt, u_vector]
-        # Simulink's ExternalInput expects columns: [time, u1, u2, …]
-        #external_input = matlab.double(
-        #    [[t0] + state_array.tolist(),
-        #     [t1] + state_array.tolist()]
-        #)
-
-        # Push to MATLAB workspace (NOT base workspace — eng.sim reads from
-        # the engine workspace when given string variable names)
-        #self.eng.workspace['statein'] = external_input
-        #self.eng.workspace['Tstart']  = float(t0)
-        #self.eng.workspace['Tstop']   = float(t1)
-        
-        self.eng.workspace['wl_step_data'] = matlab.double(
-            [[t0] + state_array.tolist(), [t1] + state_array.tolist()]
+        self.eng.workspace['wl_step_data'] = self.eng.eval(
+            f"[{t0}, {', '.join(map(str, state_array))}; "
+            f"{t1}, {', '.join(map(str, state_array))}]",
+            nargout=1
         )
-        self.eng.eval(
-            "statein = wl_step_data; Tstart = statein(1,1); Tstop = statein(2,1);",
-            nargout=0
-        )
-        # Fast Restart does not accept StartTime/StopTime as sim() arguments.
-        # Time window must be set via set_param before calling sim().
-        #self.eng.set_param(self.control_model_name, 'StartTime', str(t0), nargout=0)
-        self.eng.set_param(self.control_model_name, 'StopTime',  str(t1), nargout=0)
+        self.eng.eval("statein = wl_step_data;", nargout=0)
 
-        self.eng.workspace['OutputTimes'] = matlab.double([t0, t1])
-
-
-        """
-        try:
-            expr = ', '.join(f"simOut.{n}.Data(end)" for n in names)  # output at t0, not t1
-            expr = ', '.join(f"simOut.{n}.Data(end)" for n in names)   # ← replace this
-            
-            vals = self.eng.eval(f"[{expr}]", nargout=1)
-        except Exception:
-            expr = ', '.join(f"simOut.{n}(end)" for n in names)
-            vals = self.eng.eval(f"[{expr}]", nargout=1)
-
-        output = dict(zip(names, np.array(vals).flatten().tolist()))
-        """
-
-        # ── Force 2 logged samples (t0 and t1) + Array format ─────────────────
-        self.eng.workspace['OutputTimes'] = matlab.double([t0, t1])
-        self.eng.set_param(self.control_model_name, 'SaveFormat', 'Array', nargout=0)   # ← THIS FORCES 2 ROWS
-
-        out = self.eng.sim(
+        sim_args = [
             self.control_model_name,
-            'LoadExternalInput', 'on',
-            'ExternalInput',     'statein',
-            'OutputTimes',       'OutputTimes',
-            nargout=1,
-        )
+            'StartTime',          str(t0),
+            'StopTime',           str(t1),
+            'LoadExternalInput',  'on',
+            'ExternalInput',      'statein',
+            'SaveFormat',         'Dataset',    # ← named fields WITH .Data arrays
+            'SaveFinalState',     'on',
+            'SaveOperatingPoint', 'on',
+            'FinalStateName',     'wl_op_state',
+        ]
+        if hasattr(self, '_simulink_state'):
+            self.eng.workspace['wl_initial_state'] = self._simulink_state
+            sim_args.extend(['LoadInitialState', 'on', 'InitialState', 'wl_initial_state'])
 
+        out = self.eng.sim(*sim_args, nargout=1)
         self.eng.workspace['simOut'] = out
+        self._simulink_state = self.eng.eval("simOut.wl_op_state", nargout=1)
 
-        if not hasattr(self, '_simulink_signal_names'):
+        if not hasattr(self, '_simulink_signal_names') or not self._simulink_signal_names:
             self._simulink_signal_names = self._probe_simulink_signals()
             print(f"[PyControl] Simulink signals found: {self._simulink_signal_names}")
 
-        names = self._simulink_signal_names
-
-        # ── Extract the NEW value (row 2 of the array) ───────────────────────
-        expr = ', '.join(f"simOut.{n}(end)" for n in names)
-        vals = self.eng.eval(f"[{expr}]", nargout=1)
-        print("[PyControl] Using array (end) → newly computed controls (matches Python/FMU)")
-
-        output = dict(zip(names, np.array(vals).flatten().tolist()))
+        # With Dataset format: simOut.F2 is a Signal object, data lives in .Values.Data
+        # Row 1 = t0 (y computed from x(t0), before state update) → matches FMU semantics
+        output = {}
+        for name in self._simulink_signal_names:
+            try:
+                val = self.eng.eval(f"simOut.{name}.Values.Data(1)", nargout=1)
+            except Exception:
+                # Fallback: some Simulink versions use .Data directly (no .Values wrapper)
+                val = self.eng.eval(f"simOut.{name}.Data(1)", nargout=1)
+            output[name] = float(np.array(val).flatten()[0])
 
         self.time += Dt
         return output
+        
+        
+    
+    
         
     # ------------------------------------------------------------------
     def _probe_simulink_signals(self) -> list:
