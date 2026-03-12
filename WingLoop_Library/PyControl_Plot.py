@@ -156,6 +156,7 @@ import time
 import re
 import numpy as np
 import matplotlib
+matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.backends.backend_pdf import PdfPages
@@ -179,7 +180,7 @@ def _detect_control_vars(model_variables: dict):
 
 
 def _get_values(data_dict: dict, key: str):
-    """Safe accessor – returns [] if key absent or has no values."""
+    """Safe accessor - returns [] if key absent or has no values."""
     mv = data_dict.get("ModelVariables", {})
     return mv.get(key, {}).get("values", [])
 
@@ -287,10 +288,12 @@ class ASWINGLivePlotter:
 
         self._ylims      = {}
         self._last_spans = []
+        self._raised_once  = False  
 
     # ── public API ───────────────────────────────────────────────────────────
 
     def update(self, data_dict: dict, force_draw: bool = False):
+        
         """
         Refresh the live figure with the latest contents of *data_dict*.
 
@@ -300,61 +303,122 @@ class ASWINGLivePlotter:
 
         Parameters
         ----------
-        data_dict   : dict  – the dictionary produced by read_aswing_file.
-        force_draw  : bool  – if True, redraw regardless of refresh_interval.
+        data_dict   : dict  - the dictionary produced by read_aswing_file.
+        force_draw  : bool  - if True, redraw regardless of refresh_interval.
         """
-        # ── first call: build figure layout ──────────────────────────────
+    
         if self._fig is None:
             self._build_figure(data_dict)
 
-        # ── update header text (top-left annotation) ─────────────────────
-        model_name = data_dict.get("ModelName", "N/A")
-        time_vals  = _get_values(data_dict, "Time")
-        sim_t      = time_vals[-1] if time_vals else 0.0
-        wall_t     = time.time() - self._wall_t0
+        # Raise window once on first real update; never interfere again
+        if not self._raised_once and self._fig is not None:
+            try:
+                self._fig.canvas.manager.window.lift()
+            except AttributeError:
+                try:
+                    self._fig.canvas.manager.window.raise_()
+                except AttributeError:
+                    pass
+            self._raised_once = True
 
+        # ── cache direct list references on first call ────────────────────────
+        # We grab the actual list/array objects inside data_dict once, so every
+        # subsequent frame just reads from them without any dict traversal.
+        if not self._val_refs:
+            mv = data_dict.get("ModelVariables", {})
+            self._t_ref = mv.get("Time", {}).get("values", [])
+            all_keys = self.parameter_list + self._actuation_keys
+            for key in all_keys:
+                ref = mv.get(key, {}).get("values")
+                if ref is not None:
+                    self._val_refs[key] = ref
+
+        # ── update info text ──────────────────────────────────────────────────
+        sim_t  = self._t_ref[-1] if self._t_ref else 0.0
+        wall_t = time.time() - self._wall_t0
         self._info_text.set_text(
-            f"Model:     {model_name}\n"
+            f"Model:     {data_dict.get('ModelName','N/A')}\n"
             f"Sim time:  {sim_t:.3f} s / {self.total_sim_time:.1f} s\n"
             f"Wall time: {wall_t:.1f} s"
         )
 
-        # ── update every tracked series ───────────────────────────────────
-        t_arr = np.asarray(time_vals) if time_vals else np.array([])
+        # ── build time array once per frame ──────────────────────────────────
+        t_ref = self._t_ref
+        n_t   = len(t_ref)
+        if n_t == 0:
+            return
+        t_arr = np.asarray(t_ref)
 
+        # ── check if any ylim needs expanding (triggers a full redraw) ────────
+        needs_full_redraw = force_draw
         all_keys = self.parameter_list + self._actuation_keys
-        for key in all_keys:
-            if key not in self._lines:
-                continue
-            vals = _get_values(data_dict, key)
-            if not vals:
-                continue
-            v_arr = np.asarray(vals)
-            n = min(len(t_arr), len(v_arr))
+
+        for key, vals_ref in self._val_refs.items():
+            n = min(n_t, len(vals_ref))
             if n == 0:
                 continue
-            self._lines[key].set_data(t_arr[:n], v_arr[:n])
-            ax = self._axes[key]
-            v_min, v_max = float(v_arr[:n].min()), float(v_arr[:n].max())
-            margin = (v_max - v_min) * 0.05 if (v_max - v_min) > 0 else 0.1
-            new_lim = [v_min - margin, v_max + margin]
-            old_lim = self._ylims.get(key)
-            if old_lim is None or new_lim[0] < old_lim[0] or new_lim[1] > old_lim[1]:
-                ax.set_ylim(new_lim)
-                self._ylims[key] = new_lim
+            v = vals_ref[n - 1]   # only check the newest value — O(1) not O(n)
+            ymin = self._ymin.get(key,  np.inf)
+            ymax = self._ymax.get(key, -np.inf)
+            if v < ymin or v > ymax:
+                self._ymin[key] = min(ymin, v)
+                self._ymax.setdefault(key, -np.inf)
+                # recompute proper margin from full slice only when range expands
+                v_arr  = np.asarray(vals_ref[:n])
+                vlo, vhi = float(v_arr.min()), float(v_arr.max())
+                margin = (vhi - vlo) * 0.05 if (vhi - vlo) > 0 else 0.1
+                self._axes[key].set_ylim(vlo - margin, vhi + margin)
+                self._ymin[key] = vlo
+                self._ymax[key] = vhi
+                needs_full_redraw = True
 
-        # ── convergence overlays ──────────────────────────────────────────
-        self._update_convergence_overlays(data_dict, t_arr)
+        # ── update convergence overlays (only when spans actually change) ─────
+        conv_vals = _get_values(data_dict, "IsConverged")
+        if conv_vals:
+            spans = _compute_diverged_spans(t_arr, np.array(conv_vals, dtype=bool))
+            if spans != self._last_spans:
+                self._update_convergence_overlays(data_dict, t_arr)
+                needs_full_redraw = True
 
-        # ── throttle redraws ──────────────────────────────────────────────
+        # ── update line data ──────────────────────────────────────────────────
+        for key, vals_ref in self._val_refs.items():
+            n = min(n_t, len(vals_ref))
+            if n == 0:
+                continue
+            line = self._lines.get(key)
+            if line is None:
+                continue
+            line.set_data(t_arr[:n], np.asarray(vals_ref[:n]))
+
+        # ── draw ──────────────────────────────────────────────────────────────
         now = time.time()
-        if force_draw or (now - self._last_draw_time) >= self.refresh_interval:
-            #self._fig.canvas.draw_idle()
-            #plt.pause(0.001)
-            self._fig.canvas.draw_idle()
-            self._fig.canvas.flush_events()
-            self._last_draw_time = now
+        if (now - self._last_draw_time) < self.refresh_interval and not force_draw:
+            return
 
+        canvas = self._fig.canvas
+        if needs_full_redraw:
+            # Full redraw required (ylim changed, new divergence, first frame).
+            # Re-save background so subsequent blit frames are correct.
+            canvas.draw()
+            self._bg = canvas.copy_from_bbox(self._fig.bbox)
+            canvas.flush_events()   # ← ADD THIS
+        else:
+            # ── BLIT PATH: the fast one ───────────────────────────────────
+            # Restore saved background (axes, ticks, grid — everything static).
+            canvas.restore_region(self._bg)
+            # Draw only the line artists that changed.
+            for key in all_keys:
+                line = self._lines.get(key)
+                ax   = self._axes.get(key)
+                if line and ax:
+                    ax.draw_artist(line)
+            # Also redraw the info text (it changes every frame).
+            self._fig.draw_artist(self._info_text)
+            # Push only the changed pixels to the screen.
+            canvas.blit(self._fig.bbox)
+            canvas.flush_events()
+
+        self._last_draw_time = now
 
     def export(self, filepath: str = "aswing_results.pdf"):
         """
@@ -437,7 +501,6 @@ class ASWINGLivePlotter:
           Left  → user-requested parameter_list
           Right → detected actuation (flaps + engines)
         """
-        matplotlib.use("TkAgg") if not matplotlib.is_interactive() else None
 
         flaps, engines = _detect_control_vars(data_dict.get("ModelVariables", {}))
         self._actuation_keys = flaps + engines
@@ -530,17 +593,24 @@ class ASWINGLivePlotter:
             zorder=10,
         )
 
-        plt.ion()          # interactive mode → non-blocking show
-        plt.show()
-        # Push the window behind other windows so it never steals focus
-        # during live updates. Works on TkAgg; silently ignored elsewhere.
-        try:
-            self._fig.canvas.manager.window.lower()
-        except AttributeError:
-            pass
+        # ── finalise figure ───────────────────────────────────────────────
+        # self._fig must be set BEFORE any canvas call
         self._fig = fig
 
+        plt.ion()
+        plt.show()
 
+        # Initial draw to populate the canvas; background saved for blitting
+        fig.canvas.draw()
+        self._bg = fig.canvas.copy_from_bbox(fig.bbox)
+
+        # Caches filled on first update() call
+        self._val_refs = {}
+        self._t_ref    = None
+        self._ymin     = {}
+        self._ymax     = {}
+        
+        
 # ── convenience wrapper ───────────────────────────────────────────────────────
 
 def plot_aswing_dict(
@@ -612,19 +682,24 @@ if __name__ == "__main__":
         refresh_interval=0.1,
     )
 
-    print("Simulating live update (80 steps)…")
-    for step in range(1, N + 1):
-        # slice the fake dict as if only `step` timesteps have been written
-        partial = {
-            "ModelName": fake_dict["ModelName"],
-            "ModelStates": [],
-            "ModelVariables": {
-                k: {"values": v["values"][:step], "unit": v["unit"], "latex": v["latex"]}
-                for k, v in fake_dict["ModelVariables"].items()
-            }
+    # Replace the partial-dict loop with a growing single dict:
+    live_dict = {
+        "ModelName": fake_dict["ModelName"],
+        "ModelStates": [],
+        "ModelVariables": {
+            k: {"values": [], "unit": v["unit"], "latex": v["latex"]}
+            for k, v in fake_dict["ModelVariables"].items()
         }
-        plotter.update(partial)
-        time.sleep(0.03)   # simulate computation time
+    }
+
+    print("Simulating live update (80 steps)…")
+    for step in range(N):
+        # Append one new value to each variable — mimics read_aswing_file behaviour
+        for k, v in fake_dict["ModelVariables"].items():
+            if step < len(v["values"]):
+                live_dict["ModelVariables"][k]["values"].append(v["values"][step])
+        plotter.update(live_dict)
+        time.sleep(0.03)
 
     plotter.export("aswing_live_demo.pdf")
     print("[PyControl_Plot] Done – press Enter to close the window.")

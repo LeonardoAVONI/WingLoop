@@ -168,16 +168,18 @@ import numpy as np
 import re
 import pprint
 
-def initialize_data_dict(requested, rename_map=None, latex=None):
+def initialize_data_dict(requested, rename_map=None, latex=None, N_steps = None):
     if rename_map is None:
         rename_map = {}
     if latex is None:
         latex = {}
     units = {}
-
+    
     data = {
         "ModelName": None,
-        "ModelStates": [],
+        "ModelStates": [],        # becomes a 2D numpy array after first state is seen
+        "_N_steps":    N_steps,   # None = unknown, fall back to list append
+        "_state_count": 0,        # row index for preallocated array
         "ModelVariables": {}
     }
 
@@ -185,7 +187,7 @@ def initialize_data_dict(requested, rename_map=None, latex=None):
     for raw_var in requested:
         internal_var = rename_map.get(raw_var, raw_var)
         data["ModelVariables"][internal_var] = {
-            "values": [],
+            "values": [],#np.empty(num)
             "unit": units.get(internal_var) or units.get(raw_var),
             "latex": latex.get(internal_var) or latex.get(raw_var)
         }
@@ -202,40 +204,38 @@ def initialize_data_dict(requested, rename_map=None, latex=None):
 #    """
 #    return {elem: default_value for elem in control_elements}
 
-def read_aswing_file(filepath, data_dict, rename_map=None, RecordStateHistory=False):
+
+def _build_pattern(data_dict, rename_map):
     if rename_map is None:
         rename_map = {}
-
-    # ------------------------------------------------------------------
-    # Collect ALL raw names exactly as they appear in the file
-    # ------------------------------------------------------------------
     raw_names = list(rename_map.keys())
     for internal in list(data_dict["ModelVariables"].keys()):
         if internal not in rename_map.values():
             raw_names.append(internal)
-
     all_raw = set(raw_names)
     sorted_raw = sorted(all_raw, key=len, reverse=True)
     name_alt = '|'.join(re.escape(name) for name in sorted_raw)
-
     first_words = {name.split()[0] for name in all_raw if name}
     sorted_first = sorted(first_words, key=len, reverse=True)
     first_alt = '|'.join(re.escape(w) for w in sorted_first)
-
-    # ------------------------------------------------------------------
-    # Final ultra-robust pattern
-    # ------------------------------------------------------------------
-    pattern = re.compile(rf"""
-        (?<![A-Za-z0-9])                # word boundary
-        ({name_alt})                    # exact raw variable
+    return re.compile(rf"""
+        (?<![A-Za-z0-9])
+        ({name_alt})
         \s*:\s*
-        ([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)   # value
-        (?:\s+                          # optional unit
-            (?! (?:{first_alt})(?=[\s:]|$))   # NOT start of any known variable
-            ([^\s:]+)                   # the unit token
-            (?= \s (?! :) | $ )         # followed by space-not-colon OR end-of-line
+        ([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)
+        (?:\s+
+            (?! (?:{first_alt})(?=[\s:]|$))
+            ([^\s:]+)
+            (?= \s (?! :) | $ )
         )?
     """, re.VERBOSE)
+
+def read_aswing_file(filepath, data_dict, rename_map=None,
+                     RecordStateHistory=False, compiled_pattern=None):
+
+    if rename_map is None:
+        rename_map = {}
+    pattern = compiled_pattern if compiled_pattern is not None else _build_pattern(data_dict, rename_map)
 
     with open(filepath, "r") as f:
         lines = f.readlines()
@@ -256,12 +256,33 @@ def read_aswing_file(filepath, data_dict, rename_map=None, RecordStateHistory=Fa
             recording_states = True
             states = []
             continue
+        #if "ENDEDPRINTINGSTATES" in stripped:
+        #    recording_states = False
+        #    if RecordStateHistory:
+        #        data_dict["ModelStates"].append(np.array(states))
+        #    else:
+        #        data_dict["ModelStates"] = np.array(states)
+        #    continue
         if "ENDEDPRINTINGSTATES" in stripped:
             recording_states = False
+            state_array = np.array(states, dtype=np.float64)
             if RecordStateHistory:
-                data_dict["ModelStates"].append(np.array(states))
+                N   = data_dict.get("_N_steps")
+                idx = data_dict.get("_state_count", 0)
+
+                if N is not None:
+                    # First call: preallocate now that we know state length
+                    if idx == 0:
+                        data_dict["ModelStates"] = np.empty((N, len(state_array)), dtype=np.float64)
+                    data_dict["ModelStates"][idx] = state_array
+                    data_dict["_state_count"] = idx + 1
+                else:
+                    # N unknown: original list-of-arrays fallback
+                    if not isinstance(data_dict["ModelStates"], list):
+                        data_dict["ModelStates"] = list(data_dict["ModelStates"])
+                    data_dict["ModelStates"].append(state_array)
             else:
-                data_dict["ModelStates"] = np.array(states)
+                data_dict["ModelStates"] = state_array
             continue
         if recording_states:
             try:
@@ -445,6 +466,10 @@ def export_data_dict(data_dict, filepath):
             return {k: _make_serialisable(v) for k, v in obj.items()}
         return obj   # str, float, int, bool, None  → already fine
 
+    # Removig useless parameters used for preallocation
+    serialisable = {k: v for k, v in data_dict.items() if not k.startswith('_')}
+    serialisable = _make_serialisable(serialisable)
+    
     serialisable = _make_serialisable(data_dict)
 
     with open(filepath, "w", encoding="utf-8") as f:

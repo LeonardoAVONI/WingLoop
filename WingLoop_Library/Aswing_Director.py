@@ -95,7 +95,7 @@ import os
 import time
 import threading
 from queue import Queue, Empty
-
+import inotify_simple
 
 class Aswing_Director:
     """
@@ -269,7 +269,7 @@ class Aswing_Director:
                 pass
         return ''.join(standard_output), ''.join(error_output)
 
-    def send_writefile_command_and_receive(self, filename, custom_timer=None, append_or_overwrite = None):
+    def send_writefile_command_and_receive_old(self, filename, custom_timer=None, append_or_overwrite = None):
         """
         Function used when iterating the X commands of WingLoop
         The function asks to write the file, and waits until the file is written to continue, granting some type of 
@@ -324,6 +324,36 @@ class Aswing_Director:
             raise NameError("Filename takes too much time to write (ASWING)!")
 
         return ''.join(a), ''.join(b), time.time()-internal_start_time
+
+    def send_writefile_command_and_receive(self, filename, custom_timer=None, append_or_overwrite=None):
+        internal_start_time = time.time()
+        tt = custom_timer
+        a, b = self.send_command_and_receive(filename, custom_timer=tt)
+
+        if append_or_overwrite:
+            c, d = self.send_command_and_receive(append_or_overwrite, custom_timer=tt)
+            a, b = a + c, b + d
+
+        timeout = 5  # seconds
+
+        # ── inotify path: wake up exactly when ASWING closes the file ──
+        watch_dir  = os.path.dirname(os.path.abspath(filename))
+        watch_name = os.path.basename(filename)
+
+        inotify = inotify_simple.INotify()
+        wd = inotify.add_watch(watch_dir, inotify_simple.flags.CLOSE_WRITE)
+        try:
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                ms_left = max(1, int((deadline - time.time()) * 1000))
+                for event in inotify.read(timeout=ms_left):
+                    if event.name == watch_name:
+                        if os.stat(filename).st_size > 0:
+                            return ''.join(a), ''.join(b), time.time() - internal_start_time
+        finally:
+            inotify.rm_watch(wd)
+            inotify.close()
+
 
     def quit_and_close_aswing(self):
         """

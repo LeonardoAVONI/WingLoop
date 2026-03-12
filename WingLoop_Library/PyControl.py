@@ -282,6 +282,7 @@ class SimulinkFMUController:
             )
 
         self.fmu.setReal(self._input_vrs, state_array.tolist())
+
         self.fmu.doStep(
             currentCommunicationPoint = self.time,
             communicationStepSize     = self.Dt,
@@ -421,6 +422,9 @@ class PyControl:
                 self.eng.load_system(self.control_model_name, nargout=0)
                 self.eng.set_param(self.control_model_name, 'ReturnWorkspaceOutputs', 'on', nargout=0)
                 self.eng.set_param(self.control_model_name, 'SignalLogging',           'on', nargout=0)
+                self.eng.set_param(self.control_model_name, 'StartTime',               '0.0', nargout=0)
+                self.eng.set_param(self.control_model_name, 'FastRestart',             'on',  nargout=0)
+                
                 if self.show_simulink:
                     # open_system() brings up the block diagram window.
                     # Scopes and other sinks will display live data as sim() runs.
@@ -667,9 +671,11 @@ class PyControl:
 
         # ── MATLAB ────────────────────────────────────────────────────
         elif self.method == 'matlab':
-            state_ml = matlab.double(
-                np.array(instantaneous_state, dtype=np.float64).flatten().tolist()
-            )
+            state_np = np.asarray(instantaneous_state, dtype=np.float64).ravel()
+            state_ml = matlab.double(state_np)  # no .tolist() needed
+            #state_ml = matlab.double(
+            #    np.array(instantaneous_state, dtype=np.float64).flatten().tolist()
+            #)
             out_ml = self.eng.feval('step', self.matlab_controller_instance, state_ml, Dt, nargout=1)
             # Iterate all keys returned by the MATLAB step() function rather than
             # a hardcoded list — any F/E output added to UserController.m is included.
@@ -720,24 +726,35 @@ class PyControl:
 
         # Build external-input matrix  [t, u_vector; t+Dt, u_vector]
         # Simulink's ExternalInput expects columns: [time, u1, u2, …]
-        external_input = matlab.double(
-            [[t0] + state_array.tolist(),
-             [t1] + state_array.tolist()]
-        )
+        #external_input = matlab.double(
+        #    [[t0] + state_array.tolist(),
+        #     [t1] + state_array.tolist()]
+        #)
 
         # Push to MATLAB workspace (NOT base workspace — eng.sim reads from
         # the engine workspace when given string variable names)
-        self.eng.workspace['statein'] = external_input
-        self.eng.workspace['Tstart']  = float(t0)
-        self.eng.workspace['Tstop']   = float(t1)
+        #self.eng.workspace['statein'] = external_input
+        #self.eng.workspace['Tstart']  = float(t0)
+        #self.eng.workspace['Tstop']   = float(t1)
+        
+        self.eng.workspace['wl_step_data'] = matlab.double(
+            [[t0] + state_array.tolist(), [t1] + state_array.tolist()]
+        )
+        self.eng.eval(
+            "statein = wl_step_data; Tstart = statein(1,1); Tstop = statein(2,1);",
+            nargout=0
+        )
+        # Fast Restart does not accept StartTime/StopTime as sim() arguments.
+        # Time window must be set via set_param before calling sim().
+        #self.eng.set_param(self.control_model_name, 'StartTime', str(t0), nargout=0)
+        self.eng.set_param(self.control_model_name, 'StopTime',  str(t1), nargout=0)
+
 
         # Run the simulation for one step
         out = self.eng.sim(
             self.control_model_name,
-            'StartTime',        'Tstart',
-            'StopTime',         'Tstop',
-            'LoadExternalInput','on',
-            'ExternalInput',    'statein',
+            'LoadExternalInput', 'on',
+            'ExternalInput',     'statein',
             nargout=1,
         )
 

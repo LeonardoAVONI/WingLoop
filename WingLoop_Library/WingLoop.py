@@ -128,6 +128,7 @@ from .Aswing_Director import *
 from .PyControl import *
 from .PyControl_Plot import *
 from .PyControl_IO import *
+from .PyControl_IO import _build_pattern
 #from .PyControl_additional import *
 
 class WingLoop:
@@ -188,7 +189,8 @@ class WingLoop:
                           plot_variables,
                           plot_sim_time,
                           plot_refreshtime,
-                          plot_size = (16, 10)):
+                          plot_size = (16, 10),
+                          N_steps = None):
         # this lists all available global variables we can plot
         self.LivePlot = liveplot
         requested_full = [
@@ -267,7 +269,14 @@ class WingLoop:
         # the PyCntrl_DATA dictionary will contain the timeseries of the 
         # used aircraft: global variables, controls and state vector
         # yes, PyCntrl_DATA is iterated at each timestep
-        self.WingLoop_LogFile = initialize_data_dict(requested_full, self.rename_map, latex)
+        
+
+        self.WingLoop_LogFile = initialize_data_dict(requested_full, 
+                                                     self.rename_map, 
+                                                     latex,
+                                                     N_steps = N_steps)
+        # pre-compile the parser pattern once
+        self._compiled_pattern = _build_pattern(self.WingLoop_LogFile, self.rename_map)
 
         self.WingLoop_IsPlotting = False
         if not ((plot_variables == None) or (plot_sim_time == None) or (plot_refreshtime == None) or (plot_size == None) ):
@@ -280,6 +289,8 @@ class WingLoop:
                 figsize = plot_size
             )
         self.writingtime = 0.0
+        
+
 
 
     def Load_Files(self,filename):
@@ -346,7 +357,7 @@ class WingLoop:
         note that time.sleep() are needed lower in the code if "none" is used
         """
         # the best option for time speed is overwrite
-        state_file_write_options = "delete"
+        state_file_write_options = "overwrite"
         
         if state_file_write_options != "none":
             if state_file_write_options == "delete":
@@ -392,11 +403,15 @@ class WingLoop:
         self.WingLoop_LogFile = read_aswing_file("output", 
                                                     self.WingLoop_LogFile, 
                                                     self.rename_map,
-                                                    RecordStateHistory=True)
+                                                    RecordStateHistory=True,
+                                                compiled_pattern=self._compiled_pattern)
+        
         # plot things now, if needed, or update the plot
         if self.WingLoop_IsPlotting and self.LivePlot:
             self.WingLoop_Liveplot.update(self.WingLoop_LogFile)
-        x_state = self.WingLoop_LogFile["ModelStates"][-1] # only get the last available element
+        idx = self.WingLoop_LogFile["_state_count"] - 1
+        x_state = self.WingLoop_LogFile["ModelStates"][idx]
+        
         self.writingtime += (time.time()-starttime)
         output = self.PyControl.PyControl_DoControllerStep(instantaneous_state = x_state, Dt = Dt_aswing*K_aswing)
         print("[WingLoop] step = ", self.count,"; i+1 control:",output)
@@ -537,7 +552,7 @@ class WingLoop:
 
         self.WingLoop_Liveplot.update(self.WingLoop_LogFile) #this will be the first plot if self.LivePlot = False
         print("[WingLoop] Simulation Ended, Press Enter to continue")
-        input()
+        #input()
 
         ## Exporting the data 
         if custom_filename == None:
