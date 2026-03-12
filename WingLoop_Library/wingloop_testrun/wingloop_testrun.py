@@ -51,7 +51,7 @@ def main():
 
     #     1) Declare some WingLoop simulation parameters
     Dt=0.01 # timestep [s]
-    N=100    # total iterations to perform
+    N=300    # total iterations to perform
     K=1     # each K iterations we send the ASWING state to PyControl. Leave to 1 if you do not want to add lag
 
     #     2) Open a WingLoop Instance
@@ -71,18 +71,18 @@ def main():
         UserController.m
     """
 
-    WL_Instance.Launch_WingLoop_Control(cntrl_directory = "python_controller", 
-                            cntrl_filename = "python_test_controller.py",
+    WL_Instance.Launch_WingLoop_Control(cntrl_directory = "simulink_controller", 
+                            cntrl_filename = "simulink_test_controller.slx",
                             timestep = Dt,
                             precomputed_filename = None, 
-                            rebuild_fmu_file = False,
+                            rebuild_fmu_file = True,
                             show_simulink_window = True)
 
     #     4) Initialize the WingLoop plot method (defined in PyControl_Plot.py)
     WL_Instance.InitializePlot(liveplot = True,
                             plot_variables= ["earth X", "earth Y", "earth Z", "Heading", "Elev.", "Bank"],
                             plot_sim_time = N*Dt,
-                            plot_refreshtime= 0.00001,
+                            plot_refreshtime= 1,
                             plot_size = (16, 10),
                             N_steps = N)
 

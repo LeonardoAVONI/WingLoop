@@ -74,6 +74,8 @@ class UserController:
             self._compute_from_startup()
 
         self.simulationtime = 0.0
+        
+        self.PIDinstance = PIDController(Kp=100.0, Ki=100, Kd=20)
 
         #print("[UserController] Initialized with following values:")
         #print("     self.workspace_scalar_py:", self.workspace_scalar_py)
@@ -119,8 +121,6 @@ class UserController:
         self.F2ref = -4.638
         self.E2ref = 2.7460
         self.Pitchref = 0.081889689
-        self.PIDinstance = PIDController(Kp=100.0, Ki=0.0, Kd=0.0)
-
     # ------------------------------------------------------------------
     def step(self, instantaneous_state, Dt):
         """
@@ -183,11 +183,7 @@ class PIDController:
         self.Current_Error = 0
 
     def runPID(self,measured_variable,setpoint_variable,Ts):
-        
-        if False: #windup?
-            if np.abs(self.Previous_I_output)>10:
-                self.Previous_I_output = self.Previous_I_output*100/(np.abs(self.Previous_I_output))
-            #print(self.Previous_I_output)
+
         # computing current error
         self.Current_Error = setpoint_variable - measured_variable
 

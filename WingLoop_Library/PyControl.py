@@ -106,15 +106,21 @@ FMU Controllers (.fmu)
 Workspace Variable Handling
 ------------------------------------------------------------------------------------
 
-Python / MATLAB
+Python
     Precomputed controller data is passed to the UserController constructor
     through a file path. If no file is provided, the controller initializes its
     own default parameters.
 
-Simulink (.slx)
-    Workspace variables defined in `UserController.m` are pushed to the MATLAB
-    base workspace before each simulation step so that the Simulink model can
-    access them during execution.
+MATLAB / Simulink (.slx)
+    UserController.m is fully responsible for populating the MATLAB base workspace.
+    Any variable that Simulink needs at sim() time must be pushed inside the
+    UserController constructor using:
+
+        assignin('base', 'my_variable', value);
+
+    PyControl does not inspect UserController properties or mirror them to the
+    base workspace.  This decouples the controller's internal design from the
+    infrastructure layer.
 
 Simulink FMU (.fmu)
     When a Simulink model is exported as an FMU, workspace variables are baked
@@ -124,8 +130,9 @@ Two execution modes are available:
 
     rebuild_fmu = True
         The FMU is re-exported from the corresponding `.slx` file before
-        execution, ensuring that current workspace values are embedded in the
-        binary.
+        execution. UserController's constructor runs first (performing its
+        assignin calls), then exportToFMU2CS captures current base workspace
+        values as FMI start values in the binary.
 
     rebuild_fmu = False
         The FMU runs with the parameters embedded during the previous export.
@@ -420,10 +427,14 @@ class PyControl:
         if self.method == 'simulink':
             try:
                 self.eng.load_system(self.control_model_name, nargout=0)
-                self.eng.set_param(self.control_model_name, 'ReturnWorkspaceOutputs', 'on', nargout=0)
-                self.eng.set_param(self.control_model_name, 'SignalLogging',           'on', nargout=0)
+                self.eng.set_param(self.control_model_name, 'ReturnWorkspaceOutputs', 'on',   nargout=0)
+                self.eng.set_param(self.control_model_name, 'SignalLogging',           'on',   nargout=0)
                 self.eng.set_param(self.control_model_name, 'StartTime',               '0.0', nargout=0)
-                self.eng.set_param(self.control_model_name, 'FastRestart',             'on',  nargout=0)
+                # ── NEW: sync Simulink solver timestep with Python Dt ──────────
+                self.eng.set_param(self.control_model_name, 'Solver',    'FixedStepDiscrete', nargout=0)
+                self.eng.set_param(self.control_model_name, 'FixedStep', str(self.Dt),        nargout=0)
+                # ──────────────────────────────────────────────────────────────
+                self.eng.set_param(self.control_model_name, 'FastRestart', 'on', nargout=0)
                 
                 if self.show_simulink:
                     # open_system() brings up the block diagram window.
@@ -434,6 +445,7 @@ class PyControl:
                 raise RuntimeError(
                     f"Failed to load Simulink model '{self.control_model_name}': {exc}"
                 ) from exc
+                     
 
         # ── FMU instantiation ──────────────────────────────────────────
         elif self.method == 'simulink_fmu':
@@ -456,13 +468,16 @@ class PyControl:
             Imports the .py module, instantiates UserController, and passes
             the precomputed file path (empty string if not available).
         matlab / simulink
-            Instantiates UserController.m via the MATLAB engine, then calls
-            _push_controller_to_base_workspace() so Simulink can read the
-            workspace properties at sim() time.
+            Instantiates UserController.m via the MATLAB engine.  UserController
+            is responsible for pushing any variables it needs into the MATLAB base
+            workspace by calling assignin('base', ...) directly inside its
+            constructor.  PyControl does not inspect or mirror any UserController
+            properties — the contract is entirely owned by UserController.m.
         simulink_fmu, rebuild_fmu=True
-            Instantiates UserController.m, pushes workspace properties to the
-            MATLAB base workspace, then calls _push_controller_to_fmu() which
-            re-exports the .slx to a fresh .fmu and reloads fmu_controller.
+            Instantiates UserController.m (whose constructor runs assignin calls),
+            then calls _push_controller_to_fmu() which re-exports the .slx to a
+            fresh .fmu — the export captures current base workspace values as FMI
+            start values — and reloads fmu_controller.
         simulink_fmu, rebuild_fmu=False
             Skips MATLAB entirely; the FMU runs with values baked in at the
             last manual export.
@@ -483,20 +498,21 @@ class PyControl:
             )
 
         elif self.method in ('matlab', 'simulink'):
-            # Instantiate MATLAB UserController (handles precomputed or default)
+            # Instantiate MATLAB UserController (handles precomputed or default).
+            # UserController.__init__ is responsible for pushing any variables it needs
+            # into the MATLAB base workspace via assignin('base', ...) directly.
             precomp_arg = self.precomputed_path if self.precomputed_path else ""
             print(f"[PyControl] Instantiating MATLAB UserController …")
             self.matlab_controller_instance = self.eng.UserController(precomp_arg)
-            self._push_controller_to_base_workspace()
 
         elif self.method == 'simulink_fmu':
             if self.rebuild_fmu:
-                # Need MATLAB to re-export: instantiate UserController, push to
-                # base workspace so the .slx picks up the values on export.
+                # Need MATLAB to re-export: instantiate UserController so it pushes
+                # all required variables to the MATLAB base workspace via its own
+                # assignin('base', ...) calls, then re-export the FMU.
                 precomp_arg = self.precomputed_path if self.precomputed_path else ""
                 print(f"[PyControl] Instantiating MATLAB UserController for FMU rebuild …")
                 self.matlab_controller_instance = self.eng.UserController(precomp_arg)
-                self._push_controller_to_base_workspace()
                 self._push_controller_to_fmu()   # triggers re-export + reload
             else:
                 # FMU runs standalone — skip MATLAB entirely, use FMU as-is.
@@ -507,70 +523,14 @@ class PyControl:
                 )
 
     # ------------------------------------------------------------------
-    def _push_controller_to_base_workspace(self):
-        """
-        Push UserController workspace properties to MATLAB's base workspace.
-
-        Extracts workspace_scalar, workspace_string, and workspace_matrix from
-        the instantiated MATLAB UserController object and writes them to
-        MATLAB's base workspace via assignin('base',...).  Simulink reads
-        variables from the base workspace at sim() time, so this must complete
-        before the first sim() call.
-
-        Batched into two eng.eval() calls (one write, one readback) to minimise
-        Python↔MATLAB IPC round-trips.  The matrix is excluded from the readback
-        because a struct containing a matrix field is non-scalar and cannot be
-        returned by eng.eval().
-
-        Raises
-        ------
-        RuntimeError
-            If UserController.m does not expose the three expected properties,
-            or if the MATLAB engine call fails.
-        """
-        if self.matlab_controller_instance is None:
-            return
-
-        try:
-            # One eval that does everything: assign uc_handle, push all three
-            # variables to base workspace, then return a lightweight summary struct.
-            self.eng.workspace['uc_handle'] = self.matlab_controller_instance
-            self.eng.eval(
-                "assignin('base', 'workspace_scalar', uc_handle.workspace_scalar); "
-                "assignin('base', 'workspace_string', uc_handle.workspace_string); "
-                "assignin('base', 'workspace_matrix', uc_handle.workspace_matrix);",
-                nargout=0,
-            )
-
-            # Read back scalar+string for the log in one call (matrix excluded —
-            # a struct containing a matrix is non-scalar and can't be returned).
-            scalar = float(self.eng.eval("uc_handle.workspace_scalar", nargout=1))
-            string = str(self.eng.eval("char(uc_handle.workspace_string)", nargout=1))
-            msize  = tuple(int(x) for x in np.array(
-                self.eng.eval("size(uc_handle.workspace_matrix)", nargout=1)
-            ).flatten())
-            print(
-                f"[PyControl] Pushed to MATLAB base workspace:\n"
-                f"   workspace_scalar = {scalar}\n"
-                f"   workspace_string = {string}\n"
-                f"   workspace_matrix shape = {msize}"
-            )
-            self._controller_data = {'workspace_scalar': scalar, 'workspace_string': string}
-
-        except Exception as exc:
-            raise RuntimeError(
-                f"[PyControl] Failed to push UserController properties to base workspace.\n"
-                f"Make sure UserController.m is on the MATLAB path and exposes "
-                f"workspace_scalar, workspace_string, workspace_matrix.\nError: {exc}"
-            ) from exc
-
-    # ------------------------------------------------------------------
     def _push_controller_to_fmu(self):
         """
         Re-export the FMU from the matching .slx and reload self.fmu_controller.
 
-        Called only when rebuild_fmu=True.  Assumes _push_controller_to_base_workspace()
-        has already run so the MATLAB base workspace holds the correct values.
+        Called only when rebuild_fmu=True.  Assumes UserController.__init__ has
+        already run and pushed the required variables to the MATLAB base workspace
+        via assignin('base', ...) calls, so that exportToFMU2CS can capture them
+        as FMI start values.
 
         Procedure:
             1. Terminate and discard the existing FMU instance.
@@ -857,10 +817,10 @@ if __name__ == "__main__":
     graphics working? (yes)
     """
 
-    method        = "matlab"   # change to: python | matlab | simulink | simulink_fmu
+    method        = "simulink"   # change to: python | matlab | simulink | simulink_fmu
     IsPrecomputed = True
     RebuildFMU    = True   # simulink_fmu only
-    ShowSimulink  = False   # simulink only: open block-diagram + scopes graphically
+    ShowSimulink  = True   # simulink only: open block-diagram + scopes graphically
 
     test_instantaneous_state = ((np.arange(1945) + 1) * 10).astype(float)
     test_Dt = 0.01
