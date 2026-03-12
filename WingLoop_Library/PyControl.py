@@ -673,7 +673,6 @@ class PyControl:
 
 
 
-
     def _simulink_step(self, instantaneous_state, Dt: float) -> dict:
         state_array = np.array(instantaneous_state, dtype=np.float64).flatten()
         t0 = self.time
@@ -688,14 +687,16 @@ class PyControl:
 
         sim_args = [
             self.control_model_name,
-            'StartTime',          str(t0),
-            'StopTime',           str(t1),
-            'LoadExternalInput',  'on',
-            'ExternalInput',      'statein',
-            'SaveFormat',         'Dataset',    # ← named fields WITH .Data arrays
-            'SaveFinalState',     'on',
-            'SaveOperatingPoint', 'on',
-            'FinalStateName',     'wl_op_state',
+            'StartTime',         str(t0),
+            'StopTime',          str(t1),
+            'LoadExternalInput', 'on',
+            'ExternalInput',     'statein',
+            'SaveFormat',        'Dataset',
+            'SaveFinalState',    'on',
+            'FinalStateName',    'wl_op_state',
+            # ↑ SaveOperatingPoint REMOVED — it bakes StartTime=0 into the object,
+            #   causing MATLAB to reset to t=0 on every subsequent LoadInitialState call.
+            #   Plain SaveFinalState saves only state variables, no StartTime metadata.
         ]
         if hasattr(self, '_simulink_state'):
             self.eng.workspace['wl_initial_state'] = self._simulink_state
@@ -709,20 +710,14 @@ class PyControl:
             self._simulink_signal_names = self._probe_simulink_signals()
             print(f"[PyControl] Simulink signals found: {self._simulink_signal_names}")
 
-        # With Dataset format: simOut.F2 is a Signal object, data lives in .Values.Data
-        # Row 1 = t0 (y computed from x(t0), before state update) → matches FMU semantics
+        # timeseries format (.Data) — no .Values wrapper in this MATLAB version
         output = {}
         for name in self._simulink_signal_names:
-            try:
-                val = self.eng.eval(f"simOut.{name}.Values.Data(1)", nargout=1)
-            except Exception:
-                # Fallback: some Simulink versions use .Data directly (no .Values wrapper)
-                val = self.eng.eval(f"simOut.{name}.Data(1)", nargout=1)
+            val = self.eng.eval(f"simOut.{name}.Data(1)", nargout=1)
             output[name] = float(np.array(val).flatten()[0])
 
         self.time += Dt
         return output
-        
         
     
     
