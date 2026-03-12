@@ -431,10 +431,13 @@ class PyControl:
                 self.eng.set_param(self.control_model_name, 'SignalLogging',           'on',   nargout=0)
                 self.eng.set_param(self.control_model_name, 'StartTime',               '0.0', nargout=0)
                 # ── NEW: sync Simulink solver timestep with Python Dt ──────────
+                # ──────────────────────────────────────────────────────────────
+                #self.eng.set_param(self.control_model_name, 'FastRestart', 'on', nargout=0)
+                
                 self.eng.set_param(self.control_model_name, 'Solver',    'FixedStepDiscrete', nargout=0)
                 self.eng.set_param(self.control_model_name, 'FixedStep', str(self.Dt),        nargout=0)
-                # ──────────────────────────────────────────────────────────────
-                self.eng.set_param(self.control_model_name, 'FastRestart', 'on', nargout=0)
+                # FastRestart blocks OutputTimes and forces only 1 logged sample → DISABLE it
+                # self.eng.set_param(self.control_model_name, 'FastRestart', 'on', nargout=0)  # ← COMMENT THIS OUT
                 
                 if self.show_simulink:
                     # open_system() brings up the block diagram window.
@@ -616,8 +619,8 @@ class PyControl:
         -------
         dict
             {signal_name: float} for every output exposed by the controller.
-            Keys follow the pattern F1–F20 (force/actuator commands) and
-            E1–E20 (engine or auxiliary outputs), depending on what the
+            Keys follow the pattern F1-F20 (force/actuator commands) and
+            E1-E20 (engine or auxiliary outputs), depending on what the
             controller defines.
         """
         if Dt is None:
@@ -709,40 +712,52 @@ class PyControl:
         #self.eng.set_param(self.control_model_name, 'StartTime', str(t0), nargout=0)
         self.eng.set_param(self.control_model_name, 'StopTime',  str(t1), nargout=0)
 
+        self.eng.workspace['OutputTimes'] = matlab.double([t0, t1])
 
-        # Run the simulation for one step
-        out = self.eng.sim(
-            self.control_model_name,
-            'LoadExternalInput', 'on',
-            'ExternalInput',     'statein',
-            nargout=1,
-        )
 
-        # Push SimulationOutput object so we can use eval() to extract fields
-        self.eng.workspace['simOut'] = out
-
-        # On the first step, discover which F/E outputs actually exist in simOut
-        # by probing F1-F20 and E1-E20. Result is cached for all subsequent steps.
-        if not hasattr(self, '_simulink_signal_names'):
-            self._simulink_signal_names = self._probe_simulink_signals()
-            print(f"[PyControl] Simulink signals found: {self._simulink_signal_names}")
-
-        names = self._simulink_signal_names
-
-        # Extract all present signals in one round-trip.
-        # Try timeseries format (.Data(end)) first, fall back to array format ((end)).
+        """
         try:
-            expr = ', '.join(f"simOut.{n}.Data(end)" for n in names)
+            expr = ', '.join(f"simOut.{n}.Data(end)" for n in names)  # output at t0, not t1
+            expr = ', '.join(f"simOut.{n}.Data(end)" for n in names)   # ← replace this
+            
             vals = self.eng.eval(f"[{expr}]", nargout=1)
         except Exception:
             expr = ', '.join(f"simOut.{n}(end)" for n in names)
             vals = self.eng.eval(f"[{expr}]", nargout=1)
 
         output = dict(zip(names, np.array(vals).flatten().tolist()))
+        """
+
+        # ── Force 2 logged samples (t0 and t1) + Array format ─────────────────
+        self.eng.workspace['OutputTimes'] = matlab.double([t0, t1])
+        self.eng.set_param(self.control_model_name, 'SaveFormat', 'Array', nargout=0)   # ← THIS FORCES 2 ROWS
+
+        out = self.eng.sim(
+            self.control_model_name,
+            'LoadExternalInput', 'on',
+            'ExternalInput',     'statein',
+            'OutputTimes',       'OutputTimes',
+            nargout=1,
+        )
+
+        self.eng.workspace['simOut'] = out
+
+        if not hasattr(self, '_simulink_signal_names'):
+            self._simulink_signal_names = self._probe_simulink_signals()
+            print(f"[PyControl] Simulink signals found: {self._simulink_signal_names}")
+
+        names = self._simulink_signal_names
+
+        # ── Extract the NEW value (row 2 of the array) ───────────────────────
+        expr = ', '.join(f"simOut.{n}(end)" for n in names)
+        vals = self.eng.eval(f"[{expr}]", nargout=1)
+        print("[PyControl] Using array (end) → newly computed controls (matches Python/FMU)")
+
+        output = dict(zip(names, np.array(vals).flatten().tolist()))
 
         self.time += Dt
         return output
-
+        
     # ------------------------------------------------------------------
     def _probe_simulink_signals(self) -> list:
         """

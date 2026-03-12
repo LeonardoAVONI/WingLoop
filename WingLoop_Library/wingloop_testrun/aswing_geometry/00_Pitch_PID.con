@@ -1,0 +1,25 @@
+# Kp=K, Ki=K/Ti, Kd=K*Td
+# Here we use Kp=100, Ki = 1000, Kd = 20
+# Pitch proportional (P controller)
+   2  8  0  -1           ! -1.0 Delta(2) is elevator,  KUELEV = 8 is Theta index
+   1  1                   ! only one gain value will be used
+   0.0                    ! par1 value doesn't matter for unscheduled gain
+   0.0                    ! par2 value doesn't matter for unscheduled gain
+   100                   ! gain value Kp
+#
+
+# Pitch Integral (I controller)
+   2  14  0  -1           ! -0.01 Delta(2) is elevator,  KUELDT = 14 is Int(Theta-Theta_commanded)dt index
+   1  1                   ! only one gain value will be used
+   0.0                    ! par1 value doesn't matter for unscheduled gain
+   0.0                    ! par2 value doesn't matter for unscheduled gain
+   100                   ! gain value Ki
+
+# Pitch Derivative (D controller)
+   2  5  0  -1           ! -1 Delta(2) is elevator,  KUROTY =  5 is Wy (since the other two euler angles are zero, this is theta_dot) (4 and 6 are for omega_x and omega_z). Also, the gain is to be applied to the angular_velocity, not to the theta_i-theta_iminus1 (so no need to multiply by 1/timestep). Also, we consider the initial trimmed state to be reference (whatever the acceleration, the acceleration)
+   1  1                   ! only one gain value will be used
+   0.0                    ! par1 value doesn't matter for unscheduled gain
+   0.0                    ! par2 value doesn't matter for unscheduled gain
+   20                   ! gain value Kp
+#
+

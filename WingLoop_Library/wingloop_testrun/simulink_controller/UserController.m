@@ -125,6 +125,14 @@ classdef UserController < handle
             assignin('base', 'Ki', obj.Ki);
             assignin('base', 'Kd', obj.Kd);
 
+
+            obj.F2ref    = -4.638;
+            obj.E2ref    =  2.7460;
+            obj.Pitchref =  0.081889689;   % [rad]
+            assignin('base','F2ref',    obj.F2ref);
+            assignin('base','E2ref',    obj.E2ref);
+            assignin('base','Pitchref', obj.Pitchref);
+
         end
 
         % ------------------------------------------------------------------

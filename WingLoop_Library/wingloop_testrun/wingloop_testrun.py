@@ -51,7 +51,7 @@ def main():
 
     #     1) Declare some WingLoop simulation parameters
     Dt=0.01 # timestep [s]
-    N=300    # total iterations to perform
+    N=2 # total iterations to perform
     K=1     # each K iterations we send the ASWING state to PyControl. Leave to 1 if you do not want to add lag
 
     #     2) Open a WingLoop Instance
@@ -70,9 +70,28 @@ def main():
         python_test_controller.py
         UserController.m
     """
+    
+    selector = "sim"
+    if selector == "sim":
+        print("[wingloop_testrun] controller = Simulink")
+        control_dir = "simulink_controller"
+        control_filename = "simulink_test_controller.slx"
+    elif selector == "mat":
+        print("[wingloop_testrun] controller = Matlab")
+        control_dir = "matlab_controller"
+        control_filename = "UserController.m"
+    elif selector == "fmu":
+        print("[wingloop_testrun] controller = Simulink FMU")
+        control_dir = "simulink_controller"
+        control_filename = "simulink_test_controller.fmu"
+    elif selector == "py":
+        print("[wingloop_testrun] controller = Python")
+        control_dir = "python_controller"
+        control_filename = "python_test_controller.py"
+        
 
-    WL_Instance.Launch_WingLoop_Control(cntrl_directory = "simulink_controller", 
-                            cntrl_filename = "simulink_test_controller.slx",
+    WL_Instance.Launch_WingLoop_Control(cntrl_directory = control_dir, 
+                            cntrl_filename = control_filename,
                             timestep = Dt,
                             precomputed_filename = None, 
                             rebuild_fmu_file = True,
