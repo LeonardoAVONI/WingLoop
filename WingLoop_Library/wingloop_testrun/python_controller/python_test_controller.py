@@ -160,6 +160,8 @@ class UserController:
         output["F4"]  = 0.
         output["E1"]  = self.E2ref
         output["E2"]  = self.E2ref
+        
+        print(" [PIDcontroller] F2",output["F2"])
         return output
     
 class PIDController:
@@ -185,8 +187,10 @@ class PIDController:
     def runPID(self,measured_variable,setpoint_variable,Ts):
 
         # computing current error
+        print(" [PIDcontroller] measured theta",measured_variable)
+        
         self.Current_Error = setpoint_variable - measured_variable
-
+        print(" [PIDcontroller] measured error",self.Current_Error)
         # proportional term
         Out_P = self.Kp*self.Current_Error
 
@@ -203,7 +207,11 @@ class PIDController:
         Out_I = self.Previous_I_output + self.Ki * Ts*self.Current_Error # version for ASWING validation
         
         # summing up the contributions
+        
         Out=Out_P+Out_D+Out_I
+        print(" [PIDcontroller] Fp",Out_P)
+        print(" [PIDcontroller] Fi",Out_I)
+        print(" [PIDcontroller] Fd",Out_D)
 
         # updating the variables value
         self.Previous_D_output = Out_D

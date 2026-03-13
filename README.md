@@ -1,9 +1,7 @@
-
 ## WingLoop 2.0
 <div align="center">
   <img src="./docs/wingLoop_image.jpg" alt="WingLoop GUI during a simulation run" width="100%" />
 </div>
-
 
 **Author:** Leonardo Avoni  
 **Contact:** avonileonardo@gmail.com  
@@ -17,7 +15,7 @@
 
 WingLoop is a closed-loop control framework that extends the capabilities of [ASWING](https://web.mit.edu/drela/Public/web/aswing/), a structural and aerodynamic analysis tool for flexible aircraft. While ASWING natively supports only linear bi-scheduled controllers, WingLoop integrates ASWING with Python — and optionally MATLAB or Simulink — to enable arbitrary control laws, including nonlinear strategies.
 
-The core of WingLoop is a coupling between ASWING and external control environments. The simulation advances in a time-marching loop, either step by step or in chunks of *K* timesteps. Between iterations, the simulation state is passed to Python, and then to MATLAB or Simulink if needed (through the corresponding API), where the control laws are computed. The resulting control inputs are returned to ASWING for the next timestep, enabling closed-loop simulations with arbitrary controllers.
+The simulation advances in a time-marching loop, either step by step or in chunks of *K* timesteps. Between iterations, the simulation state is passed to Python — and then to MATLAB or Simulink if needed — where the control laws are computed. The resulting control inputs are returned to ASWING for the next timestep, enabling closed-loop simulations with arbitrary controllers.
 
 ### Reference Publication
 
@@ -42,41 +40,6 @@ After installation, the following imports will be available:
 from WingLoop_Library import Aswing_Director
 from WingLoop_Library import WingLoop
 ```
-
----
-
-## Quick Start
-
-Navigate to the test run directory and execute the test script:
-
-```bash
-cd WingLoop_Library/wingloop_testrun
-python wingloop_testrun.py
-```
-The test run simulates the aircraft shown below, featuring 4 groups of control surfaces and two engines.
-
-<div align="center">
-  <img src="./docs/wingloop_test_aircraft.png" alt="Test aircraft configuration" width="100%" />
-  <p><em>Test aircraft configuration</em></p>
-</div>
-
-<div align="center">
-  <img src="./docs/wingloop_test.png" alt="WingLoop GUI during a simulation run" width="100%" />
-  <p><em>WingLoop GUI during a simulation run</em></p>
-</div>
-
-A sample `.json` output from a completed run is available [here](docs/wingloop_test_aircraft.json).
-
-
-
-Individual library scripts (`PyControl`, `PyControl_Plot`,...) can also be run and tested independently via their `__main__` block:
-
-```python
-if __name__ == "__main__":
-    ...
-```
-
-
 
 ---
 
@@ -122,7 +85,7 @@ WingLoop_Library/
 | `PyControl_Plot.py` | Plotting utilities for real-time monitoring and post-run analysis |
 | `PyControl_additional.py` | Legacy utilities from earlier versions |
 
-Further details on each module are available in the header of the respective source file.
+Further details on each module are available in the header of the respective source file. Individual modules can also be run and tested independently via their `__main__` block.
 
 ---
 
@@ -131,6 +94,90 @@ Further details on each module are available in the header of the respective sou
 - **Python** — native Python control laws
 - **MATLAB** — via MATLAB's Python API
 - **Simulink** — via FMU export or MATLAB/Simulink API
+
+---
+
+## WingLoop TestRun
+
+The `wingloop_testrun` case is designed to assess WingLoop's behavior and performance across all supported controller types. A simple PID controller is applied to the aircraft shown below, featuring 4 groups of control surfaces and two engines. The same controller is implemented in five different ways: Python, MATLAB, Simulink, compiled Simulink (FMU), and ASWING's native controller format. All ASWING-relevant files (trimming state, gust file, ASWING controller file, etc.) are located in the `aswing_geometry` folder.
+
+<div align="center">
+  <img src="./docs/wingloop_test_aircraft.png" alt="Test aircraft configuration" width="100%" />
+  <p><em>Test aircraft configuration</em></p>
+</div>
+
+To run the test case:
+
+```bash
+cd WingLoop_Library/wingloop_testrun
+python wingloop_testrun.py
+```
+
+<div align="center">
+  <img src="./docs/wingloop_test.png" alt="WingLoop GUI during a simulation run" width="100%" />
+  <p><em>WingLoop GUI during a simulation run</em></p>
+</div>
+
+A sample `.json` output from a completed run is available [here](docs/wingloop_test_aircraft.json).
+
+> **Note on the ASWING-native case:** when using the ASWING built-in controller, WingLoop is bypassed entirely — the controller is integrated directly within the ASWING execution. Results are equivalent to the WingLoop cases, with the exception of a one-timestep lag inherent to the WingLoop coupling method.
+
+### Scenario
+
+The controller objective is to stabilize the aircraft in response to a 1-cosine gust.
+
+**Flight conditions:**
+- Leveled, horizontal flight at $V_{\infty} = 30\ \mathrm{m/s}$
+- 1-cosine vertical gust (frozen-flow) applied as perturbation: distance to gust start −15 m, gust zero-to-peak distance 15 m, peak vertical velocity 3 m/s
+
+**Simulation parameters:** $N = 300$, $K = 1$, $\Delta t = 0.01\ \mathrm{s}$ — plot refresh every 1 s
+
+**PID gains:** $K_P = 100\ \mathrm{[deg/rad]}$, $K_I = 100\ \mathrm{[deg/(rad \cdot s)]}$, $K_D = 20\ \mathrm{[deg \cdot s/rad]}$
+
+### Test Machine
+
+Benchmarks were collected on the following machine, running only VSCode and ASWING in the background:
+
+| | |
+|---|---|
+| **Model** | Dell Inc. Precision 3581 |
+| **RAM** | 32.0 GiB |
+| **CPU** | 13th Gen Intel® Core™ i7-13800H × 20 |
+| **GPU** | NVIDIA Corporation / Mesa Intel® Graphics (RPL-P) |
+| **Storage** | 1.0 TB |
+| **OS** | Ubuntu 22.04.5 LTS |
+
+
+> Timing results are machine-dependent and will vary on different hardware.
+
+### Performance Results
+
+Timing is split into two categories:
+
+- **Overhead time** — one-off startup cost (WingLoop initialisation, MATLAB engine startup, FMU compilation, etc.)
+- **Computational time** — wall-clock time to complete all $N$ iterations
+
+**Baseline — ASWING with native controller (no WingLoop):**
+
+| Overhead | Computational time |
+|---|---|
+| — | 10.70 s |
+
+**WingLoop results by controller type:**
+
+| Controller | Plot ON [s] | Δ Plot ON | Plot OFF [s] | Δ Plot OFF | Overhead [s] |
+|---|---|---|---|---|---|
+| Python                        | 15.01 | +40.3% | 11.73 |  +9.6% |  0.49 |
+| MATLAB                        | 15.94 | +49.0% | 12.92 | +20.7% |  2.95 |
+| Simulink (With GUI)                      | 138.0 | +1190% | 137.3 | +1183% | 18.58 |
+| Simulink (Without GUI)                      | 105.0 | +881% | 91.06 | +751% | 13.51 |
+| Simulink FMU (recompiled then run)     | 14.64 | +36.8% | 11.98 | +12.0% | 26.50 |
+| Simulink FMU (non-recompiled then run) | 14.88 | +39.1% | 11.87 | +10.9% |  0.53 |
+
+*Δ columns show computational time increase relative to the ASWING baseline (10.70 s). These are* ***not*** *official benchmarks — they give a rough sense of the relative cost of each integration approach. Since computational time scales linearly with* $N$*, the per-iteration cost can be estimated by dividing by* $N = 300$*.*
+
+> Note how Simulink FMU compilation takes overhead time, but allows faster simulink execution, very close to Python controller performance. Note also how updating the life WingLoop plots makes simulation slower.
+For speed advice: if the controller is simple, choose Python or Matlab. If you absolutely need Simulink, you can use the non-FMU version to check if the controller works as intended, and the compiled FMU for speed.
 
 ---
 

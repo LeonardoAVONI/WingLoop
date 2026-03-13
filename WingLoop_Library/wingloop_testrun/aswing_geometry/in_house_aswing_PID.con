@@ -1,9 +1,0 @@
-#
-# phugoid damper
-   2  8  0  1.0           ! Delta(2) is elevator,  KUROTZ = 8 is Theta index
-   1  1                   ! only one gain value will be used
-   0.0                    ! par1 value doesn't matter for unscheduled gain
-   0.0                    ! par2 value doesn't matter for unscheduled gain
-  -0.60                   ! gain value
-#
-

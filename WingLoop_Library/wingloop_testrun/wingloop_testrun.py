@@ -48,10 +48,11 @@ def main():
     For more details, refer to the header of each library used
 
     """
+    tfirst = time.time()
 
     #     1) Declare some WingLoop simulation parameters
     Dt=0.01 # timestep [s]
-    N=300 # total iterations to perform
+    N=10 # total iterations to perform
     K=1     # each K iterations we send the ASWING state to PyControl. Leave to 1 if you do not want to add lag
 
     #     2) Open a WingLoop Instance
@@ -71,7 +72,7 @@ def main():
         UserController.m
     """
     
-    selector = "sim"
+    selector = "py"
     if selector == "sim":
         print("[wingloop_testrun] controller = Simulink")
         control_dir = "simulink_controller"
@@ -94,14 +95,14 @@ def main():
                             cntrl_filename = control_filename,
                             timestep = Dt,
                             precomputed_filename = None, 
-                            rebuild_fmu_file = True,
-                            show_simulink_window = True)
+                            rebuild_fmu_file = False,
+                            show_simulink_window = False)
 
     #     4) Initialize the WingLoop plot method (defined in PyControl_Plot.py)
     WL_Instance.InitializePlot(liveplot = True,
                             plot_variables= ["earth X", "earth Y", "earth Z", "Heading", "Elev.", "Bank"],
                             plot_sim_time = N*Dt,
-                            plot_refreshtime= 1,
+                            plot_refreshtime = 1,
                             plot_size = (16, 10),
                             N_steps = N)
 
@@ -125,8 +126,8 @@ def main():
     tstart = time.time()
     WL_Instance.Time_Transient_Simulation(Dt,N,K)
     tend = time.time()
-    print("[wingloop_testrun] total simulation time",tend-tstart)
-
+    print("[wingloop_testrun] simulation time",tend-tstart)
+    print("[wingloop_testrun] overhead time",-tfirst+tstart)
 
     #     8) Save the WingLoop and ASWING data
     WL_Instance.Outputting_The_State_File(statefile_filename=None) #one can specify custom names
