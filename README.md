@@ -65,6 +65,7 @@ WingLoop_Library/
 │   └── test_output/
 │
 └── wingloop_testrun/
+    ├── results/                # containing PID testing results
     ├── aswing_geometry/
     ├── matlab_controller/
     ├── python_controller/
@@ -209,13 +210,19 @@ Unit Delay, and subtract the Unit Delay output from the Clock output. The result
 the current simulation timestep `Dt`.
 
 **Derivative filter coefficient `N`** (relevant for any block with a derivative term,
-such as the Discrete PID): always use a filtered derivative, and make sure to satisfy
-`N · Dt < 1`. Violating this condition places the derivative filter pole outside the
-unit circle, causing instability even when an equivalent Python or MATLAB controller is
-stable. A safe default is `N = 0.1 / Dt`, which keeps `N · Dt = 0.1` regardless of the
-timestep chosen in WingLoop. Parameterising `N` as a function of `Dt` in your
-`UserController.m` is strongly recommended so that changing `Dt` in WingLoop does not
-require manual edits to the Simulink model.
+such as the Discrete PID): always use a filtered derivative. The filter pole is located
+at `1 - N·Dt`, so `N·Dt > 1` places it outside the unit circle and causes instability
+even when an equivalent Python or MATLAB controller is stable.
+
+Validation tests across Dt = {2×10⁻², 1×10⁻², 5×10⁻³} s show that `N·Dt = 1.0`
+produces identical results across all WingLoop controller backends (Python, MATLAB,
+Simulink, and FMU), and is therefore the recommended value. Choosing `N·Dt > 1.0`
+leads to unstable Simulink behavior.
+
+It is strongly recommended to parameterise `N = 1.0 / Dt` inside `UserController.m`
+rather than hardcoding a numerical value in the `.slx` file. This ensures that `N`
+is always consistent with whatever timestep `Dt` is set in WingLoop, with no manual
+edits to the Simulink model required.
 
 **Inputs:** place a single Inport block named `statein`. This receives the full WingLoop
 state vector at each timestep.
