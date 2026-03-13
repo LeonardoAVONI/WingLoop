@@ -182,7 +182,19 @@ For speed advice: if the controller is simple, choose Python or Matlab. If you a
 ---
 ## Rules for Writing a Simulink Controller
 
-The following rules must be respected when writing a Simulink controller for WingLoop.
+
+
+As a reference, the example controller in the `simulink_controller` folder demonstrates
+all of the above rules. Its block diagram is shown below. Note that this controller has no
+physical meaning and was written purely to exercise and validate the WingLoop–Simulink
+interface.
+
+<div align="center">
+  <img src="./docs/simulink_controller.png" alt="WingLoop GUI during a simulation run" width="100%" />
+  <p><em>Block diagram of simulink_test_controller.slx.</em></p>
+</div>
+
+The following rules must be respected when writing a Simulink controller for WingLoop:
 
 **Solver settings** (Model Settings → Solver → Solver Selection):
 set the solver type to "Fixed-step" and the solver to "discrete (no continuous states)".
@@ -216,14 +228,13 @@ using ASWING-compatible signal names (e.g. `F1`, `F2`, `E1`, `E15`). Both are re
 the Outport is used by WingLoop to read the controller output, and the To Workspace block
 enables signal logging and inspection in the Simulink workspace.
 
-**Pre-Declared Variables:** do not worry if the blocks you use refer to variables that do not exist yet, as long as you declare those variables in the Simulink-related MATLAB file (`UserController.m`)
+**Workspace variables:** blocks that reference MATLAB workspace variables (gains, lookup
+tables, filter coefficients, etc.) do not need those variables to exist inside the `.slx`
+file itself. Any variable your Simulink model needs must instead be declared and pushed to
+the MATLAB base workspace inside `UserController.m`, using `assignin('base', ...)` in the
+constructor. WingLoop guarantees that `UserController.m` is executed before the first
+`sim()` call, so all variables will be available when Simulink runs.
 
-As reference, the Simulink file in the `simulink_controller` folder is provided as an example. Is is also shown below
-
-<div align="center">
-  <img src="./docs/simulink_controller.png" alt="WingLoop GUI during a simulation run" width="100%" />
-  <p><em>Simulink view of simulink_test_controller.slx. This controller has no physical meaning and was only produced to test WingLoop</em></p>
-</div>
 
 
 ---
