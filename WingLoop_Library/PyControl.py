@@ -220,6 +220,8 @@ class SimulinkFMUController:
             visible           = False,
             debug_logging     = False,
         )
+        
+        print("[PyControl] Setting the timestep in FMU to ",self.Dt)
 
         # Cache sorted input VRs once
         input_vars = [
@@ -437,7 +439,6 @@ class PyControl:
                         f"Results may differ if model has continuous states.",
                         UserWarning
                     )
-                
                 self.eng.set_param(self.control_model_name, 'ReturnWorkspaceOutputs', 'on',   nargout=0)
                 self.eng.set_param(self.control_model_name, 'SignalLogging',           'on',   nargout=0)
                 self.eng.set_param(self.control_model_name, 'StartTime',               '0.0', nargout=0)
@@ -448,7 +449,18 @@ class PyControl:
                 self.eng.set_param(self.control_model_name, 'Solver',    'FixedStepDiscrete', nargout=0)
                 self.eng.set_param(self.control_model_name, 'FixedStep', str(self.Dt),        nargout=0)
                 # FastRestart blocks OutputTimes and forces only 1 logged sample → DISABLE it
-                # self.eng.set_param(self.control_model_name, 'FastRestart', 'on', nargout=0)  # ← COMMENT THIS OUT
+                # self.eng.set_param(self.control_model_name, 'FastRestart', 'on', nargout=0)  # ← COMMENT THIS OUT               
+
+                # Enforce self.Dt on every discrete block — overrides whatever is hardcoded in the .slx
+                all_blocks = self.eng.find_system(self.control_model_name, 'Type', 'Block', nargout=1)
+                for blk in all_blocks:
+                    try:
+                        st = self.eng.get_param(blk, 'SampleTime', nargout=1)
+                        if float(st) > 0:          # skip inherited(-1), triggered(-2), continuous(0)
+                            self.eng.set_param(blk, 'SampleTime', str(self.Dt), nargout=0)
+                    except Exception:
+                        pass
+                
                 
                 if self.show_simulink:
                     # open_system() brings up the block diagram window.
@@ -581,6 +593,20 @@ class PyControl:
             self.eng.load_system(slx_name, nargout=0)
         except Exception:
             pass
+        
+        # 2.5 Timestep modification
+        # Enforce self.Dt in the .slx before compiling the FMU binary
+        self.eng.set_param(slx_name, 'Solver',    'FixedStepDiscrete', nargout=0)
+        self.eng.set_param(slx_name, 'FixedStep', str(self.Dt),        nargout=0)
+        all_blocks = self.eng.find_system(slx_name, 'Type', 'Block', nargout=1)
+        for blk in all_blocks:
+            try:
+                st = self.eng.get_param(blk, 'SampleTime', nargout=1)
+                if float(st) > 0:
+                    self.eng.set_param(blk, 'SampleTime', str(self.Dt), nargout=0)
+            except Exception:
+                pass
+        
 
         # 3. Re-export to FMU (overwrites the existing .fmu).
         #    R2025b changed the API: 'CoSimulation' is now 'FMUType','CoSimulation'
@@ -672,7 +698,6 @@ class PyControl:
 
 
 
-
     def _simulink_step(self, instantaneous_state, Dt: float) -> dict:
         state_array = np.array(instantaneous_state, dtype=np.float64).flatten()
         t0 = self.time
@@ -694,9 +719,6 @@ class PyControl:
             'SaveFormat',        'Dataset',
             'SaveFinalState',    'on',
             'FinalStateName',    'wl_op_state',
-            # ↑ SaveOperatingPoint REMOVED — it bakes StartTime=0 into the object,
-            #   causing MATLAB to reset to t=0 on every subsequent LoadInitialState call.
-            #   Plain SaveFinalState saves only state variables, no StartTime metadata.
         ]
         if hasattr(self, '_simulink_state'):
             self.eng.workspace['wl_initial_state'] = self._simulink_state
@@ -710,7 +732,6 @@ class PyControl:
             self._simulink_signal_names = self._probe_simulink_signals()
             print(f"[PyControl] Simulink signals found: {self._simulink_signal_names}")
 
-        # timeseries format (.Data) — no .Values wrapper in this MATLAB version
         output = {}
         for name in self._simulink_signal_names:
             val = self.eng.eval(f"simOut.{name}.Data(1)", nargout=1)

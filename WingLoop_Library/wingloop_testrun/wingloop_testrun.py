@@ -51,8 +51,8 @@ def main():
     tfirst = time.time()
 
     #     1) Declare some WingLoop simulation parameters
-    Dt=0.01 # timestep [s]
-    N=10 # total iterations to perform
+    Dt=0.02 # timestep [s]
+    N=300 # total iterations to perform
     K=1     # each K iterations we send the ASWING state to PyControl. Leave to 1 if you do not want to add lag
 
     #     2) Open a WingLoop Instance
@@ -72,7 +72,7 @@ def main():
         UserController.m
     """
     
-    selector = "py"
+    selector = "sim"
     if selector == "sim":
         print("[wingloop_testrun] controller = Simulink")
         control_dir = "simulink_controller"
@@ -95,7 +95,7 @@ def main():
                             cntrl_filename = control_filename,
                             timestep = Dt,
                             precomputed_filename = None, 
-                            rebuild_fmu_file = False,
+                            rebuild_fmu_file = True,
                             show_simulink_window = False)
 
     #     4) Initialize the WingLoop plot method (defined in PyControl_Plot.py)

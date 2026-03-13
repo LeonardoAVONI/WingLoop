@@ -180,7 +180,53 @@ Timing is split into two categories:
 For speed advice: if the controller is simple, choose Python or Matlab. If you absolutely need Simulink, you can use the non-FMU version to check if the controller works as intended, and the compiled FMU for speed.
 
 ---
+## Rules for Writing a Simulink Controller
 
+The following rules must be respected when writing a Simulink controller for WingLoop.
+
+**Solver settings** (Model Settings → Solver → Solver Selection):
+set the solver type to "Fixed-step" and the solver to "discrete (no continuous states)".
+The fixed-step size can be left as `-1` (auto/inherited) — WingLoop will enforce its own
+timestep `Dt` at runtime.
+
+**Use discrete blocks only.** Continuous blocks are incompatible with the discrete solver
+and will cause errors or incorrect results.
+
+**Retrieving the current timestep** inside the model: use a Clock block, feed it into a
+Unit Delay, and subtract the Unit Delay output from the Clock output. The result equals
+the current simulation timestep `Dt`.
+
+**Derivative filter coefficient `N`** (relevant for any block with a derivative term,
+such as the Discrete PID): always use a filtered derivative, and make sure to satisfy
+`N · Dt < 1`. Violating this condition places the derivative filter pole outside the
+unit circle, causing instability even when an equivalent Python or MATLAB controller is
+stable. A safe default is `N = 0.1 / Dt`, which keeps `N · Dt = 0.1` regardless of the
+timestep chosen in WingLoop. Parameterising `N` as a function of `Dt` in your
+`UserController.m` is strongly recommended so that changing `Dt` in WingLoop does not
+require manual edits to the Simulink model.
+
+**Inputs:** place a single Inport block named `statein`. This receives the full WingLoop
+state vector at each timestep.
+
+**Outputs:** for each control command, add both:
+- an Outport block, and
+- a To Workspace block pointing to the same signal,
+
+using ASWING-compatible signal names (e.g. `F1`, `F2`, `E1`, `E15`). Both are required:
+the Outport is used by WingLoop to read the controller output, and the To Workspace block
+enables signal logging and inspection in the Simulink workspace.
+
+**Pre-Declared Variables:** do not worry if the blocks you use refer to variables that do not exist yet, as long as you declare those variables in the Simulink-related MATLAB file (`UserController.m`)
+
+As reference, the Simulink file in the `simulink_controller` folder is provided as an example. Is is also shown below
+
+<div align="center">
+  <img src="./docs/simulink_controller.png" alt="WingLoop GUI during a simulation run" width="100%" />
+  <p><em>Simulink view of simulink_test_controller.slx. This controller has no physical meaning and was only produced to test WingLoop</em></p>
+</div>
+
+
+---
 ## License
 
 WingLoop is licensed under **[CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)** — free for non-commercial use with attribution.
