@@ -482,6 +482,10 @@ class PyControl:
 
         # ── Setup (load/compute UserController data) ───────────────────
         self._setup()
+        
+        if self.method == 'simulink':
+            self.eng.eval(f"assignin('base', 'Nfilter', {1.0 / self.Dt});", nargout=0)
+            print(f"[PyControl] Nfilter = {1.0 / self.Dt:.4f} pushed to MATLAB base workspace (N·Dt = 1.0)")
 
     # ------------------------------------------------------------------
     def _setup(self):
@@ -539,6 +543,9 @@ class PyControl:
                 precomp_arg = self.precomputed_path if self.precomputed_path else ""
                 print(f"[PyControl] Instantiating MATLAB UserController for FMU rebuild …")
                 self.matlab_controller_instance = self.eng.UserController(precomp_arg)
+                # Push Nfilter before export so it gets baked into the FMU binary
+                self.eng.eval(f"assignin('base', 'Nfilter', {1.0 / self.Dt});", nargout=0)
+                print(f"[PyControl] Nfilter = {1.0 / self.Dt:.4f} pushed to base workspace for FMU export (N·Dt = 1.0)")
                 self._push_controller_to_fmu()   # triggers re-export + reload
             else:
                 # FMU runs standalone — skip MATLAB entirely, use FMU as-is.

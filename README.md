@@ -219,10 +219,10 @@ produces identical results across all WingLoop controller backends (Python, MATL
 Simulink, and FMU), and is therefore the recommended value. Choosing `N·Dt > 1.0`
 leads to unstable Simulink behavior.
 
-It is strongly recommended to parameterise `N = 1.0 / Dt` inside `UserController.m`
-rather than hardcoding a numerical value in the `.slx` file. This ensures that `N`
-is always consistent with whatever timestep `Dt` is set in WingLoop, with no manual
-edits to the Simulink model required.
+It is strongly recommended to use the already available  `Nfilter = 1.0 / Dt` defined from 
+WingLoop in the `.slx` file. This ensures consistency with whatever timestep `Dt` is set in 
+WingLoop, with no manual edits to the Simulink model required. This method does not prohibit 
+the user from enforcing a value of `N` different from `Nfilter`.
 
 **Inputs:** place a single Inport block named `statein`. This receives the full WingLoop
 state vector at each timestep.
