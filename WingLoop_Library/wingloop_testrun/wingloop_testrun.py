@@ -51,7 +51,7 @@ def main():
     tfirst = time.time()
 
     #     1) Declare some WingLoop simulation parameters
-    Dt=0.02 # timestep [s]
+    Dt=0.01 # timestep [s]
     N=300 # total iterations to perform
     K=1     # each K iterations we send the ASWING state to PyControl. Leave to 1 if you do not want to add lag
 

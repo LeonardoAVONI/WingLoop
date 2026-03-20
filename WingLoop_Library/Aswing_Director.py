@@ -372,9 +372,9 @@ class Aswing_Director:
 
 if __name__=="__main__":
     ### TUTORIAL ###
-    ASW_handler = Aswing_Director()
+    ASW_handler = Aswing_Director(aswing_path = None,aswing_alias = "aswing_stable")
     print("A")
-    ASW_handler.start_aswing(filename="hawk",print_output=True)
+    ASW_handler.start_aswing(filename="test_files/test_aircraft/wingloop_test_aircraft",print_output=True)
     print("B")
     # Send commands and print outputs
     stdout, stderr = ASW_handler.send_command_and_receive("plot")
@@ -391,6 +391,18 @@ if __name__=="__main__":
     stdout, stderr = ASW_handler.send_command_and_receive("H")
     print("H")
     stdout, stderr = ASW_handler.send_command_and_receive("\n")
+    stdout, stderr = ASW_handler.send_command_and_receive("OPER")
+    stdout, stderr = ASW_handler.send_command_and_receive("!V 30")
+    stdout, stderr = ASW_handler.send_command_and_receive("%")
+    stdout, stderr = ASW_handler.send_command_and_receive("A")
+    stdout, stderr = ASW_handler.send_command_and_receive("D")
+    stdout, stderr = ASW_handler.send_command_and_receive("H")
+    stdout, stderr = ASW_handler.send_command_and_receive("x")
+    stdout, stderr = ASW_handler.send_command_and_receive("w")
+    stdout, stderr = ASW_handler.send_command_and_receive("test")
+#    stdout, stderr = ASW_handler.send_writefile_command_and_receive(filename = "test",append_or_overwrite="A")
+    stdout, stderr = ASW_handler.send_command_and_receive("\n")
+
     print("I")
     ASW_handler.quit_and_close_aswing()
 
