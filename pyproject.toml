@@ -16,6 +16,14 @@ authors = [
 dependencies = [
     "numpy",
     "matplotlib",
+    "time",
+    "fmpy",    
+    "sys",
+    "matlab.engine",
+    "tkinter",
+    "re",
+    "json",
+    "inotify_simple",
 ]
 
 [tool.setuptools.packages.find]
