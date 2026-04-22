@@ -334,7 +334,7 @@ class Aswing_Director:
             c, d = self.send_command_and_receive(append_or_overwrite, custom_timer=tt)
             a, b = a + c, b + d
 
-        timeout = 5  # seconds
+        timeout = 99999  # seconds
 
         # ── inotify path: wake up exactly when ASWING closes the file ──
         watch_dir  = os.path.dirname(os.path.abspath(filename))

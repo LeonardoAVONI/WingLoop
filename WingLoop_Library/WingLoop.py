@@ -175,14 +175,17 @@ class WingLoop:
                                 show_simulink_window = False):
         # create a Python Instance, for control reasons. It stores timeseries and control laws
         # the exact controller used is in UAV_control_Strategy (modifiable)
-        self.PyControl = PyControl(
-            control_directory = cntrl_directory, # where the controller is located
-            control_file      = cntrl_filename, # which control file is used
-            precomputed_file  = precomputed_filename, # which precomputed file is used (if none, )
-            Dt                = timestep, #simulation timestep
-            rebuild_fmu       = rebuild_fmu_file, # are we rebuilding the fmu file or not?
-            show_simulink     = show_simulink_window, # are we showing the simulink window during execution?
-        )
+        if (cntrl_directory is not None) and (cntrl_filename is not None):
+            self.PyControl = PyControl(
+                control_directory = cntrl_directory, # where the controller is located
+                control_file      = cntrl_filename, # which control file is used
+                precomputed_file  = precomputed_filename, # which precomputed file is used (if none, )
+                Dt                = timestep, #simulation timestep
+                rebuild_fmu       = rebuild_fmu_file, # are we rebuilding the fmu file or not?
+                show_simulink     = show_simulink_window, # are we showing the simulink window during execution?
+            )
+        else:
+            self.fixed_stick = True
 
 
     def InitializePlot(self,liveplot,
@@ -347,6 +350,10 @@ class WingLoop:
         # we define what the command is to perform K iterations using a certain 
         # input file called "input"
         x_command="x input"
+
+        # allow for fixed-stick computations, with no control laws
+        if self.fixed_stick:
+            x_command ="x"
         
         """
         Several options are available concerning the state file written by ASWING
@@ -413,11 +420,12 @@ class WingLoop:
         x_state = self.WingLoop_LogFile["ModelStates"][idx]
         
         self.writingtime += (time.time()-starttime)
-        output = self.PyControl.PyControl_DoControllerStep(instantaneous_state = x_state, Dt = Dt_aswing*K_aswing)
-        print("[WingLoop] step = ", self.count,"; i+1 control:",output)
+        if not self.fixed_stick:
+            output = self.PyControl.PyControl_DoControllerStep(instantaneous_state = x_state, Dt = Dt_aswing*K_aswing)
+            print("[WingLoop] step = ", self.count,"; i+1 control:",output)
 
-        # create the file for the next iteration engine and flap deflections
-        python2text("input",output)
+            # create the file for the next iteration engine and flap deflections
+            python2text("input",output)
 
         #perform K time iteration on aswing, using the input text file just written
         stdout, stderr = self.ASW_handler.send_command_and_receive(x_command, custom_timer=custom_timer) #create K_aswing iteration of the unsteady simulation
@@ -439,7 +447,7 @@ class WingLoop:
         # it would work using OPER>% not OPER>T
         pass
 
-    def Time_Transient_Simulation(self,Dt,N,K):
+    def Time_Transient_Simulation(self,Dt,N,K,stop_if_notconverged = True):
         
         """ 
         Simulates the time-transient behavior of the aircraft starting from a pre-computed trimming point.
@@ -498,23 +506,40 @@ class WingLoop:
             stdout, stderr = self.ASW_handler.send_command_and_receive(command)
         self.count=L
 
+
+
+
         ### PERFORMING ALL INTERMEDIATE ITERATIONS (between L and N)
         while not (self.count + K >= N):
-            # performing a number K of iteration (write output of the previous state, obtain the control command, send to aswing, perform K aswing iterations)
-            if self.print_output:
-                print("[WingLoop] iterations: from", self.count, " to ",self.count+K, " (step of ", K,")")
-            self.Performing_K_iterations_ASWING(Dt_aswing=Dt, K_aswing=K)
-            #incrementing the counter
-            self.count += K
 
-        ### PERFORMING THE FINAL ROUND OF ITERATIONS (between L+k*K and N)
-        if self.count<N:
+            breaksim = any(not v for v in self.WingLoop_LogFile["ModelVariables"]["IsConverged"]["values"])
+            if not breaksim:
+                # performing a number K of iteration (write output of the previous state, obtain the control command, send to aswing, perform K aswing iterations)
+                if self.print_output:
+                    print("[WingLoop] iterations: from", self.count, " to ",self.count+K, " (step of ", K,")")
+                self.Performing_K_iterations_ASWING(Dt_aswing=Dt, K_aswing=K)
+                #incrementing the counter
+                self.count += K
+            else:
+                break
+
+        if not breaksim:
+            ### PERFORMING THE FINAL ROUND OF ITERATIONS (between L+k*K and N)
+            if self.count<N:
+                if self.print_output:
+                    print("Final iterations: from", self.count, " to ",N, " (step of ", N - self.count,")")
+                self.Performing_K_iterations_ASWING(Dt_aswing=Dt, K_aswing=N-self.count)
+                self.count += N-self.count
             if self.print_output:
-                print("Final iterations: from", self.count, " to ",N, " (step of ", N - self.count,")")
-            self.Performing_K_iterations_ASWING(Dt_aswing=Dt, K_aswing=N-self.count)
-            self.count += N-self.count
-        if self.print_output:
-            print("[WingLoop] Final Counter",self.count)
+                print("[WingLoop] Final Counter",self.count)
+            breaksim = any(not v for v in self.WingLoop_LogFile["ModelVariables"]["IsConverged"]["values"])
+
+        if not breaksim:
+            allconverged = True
+        else:
+            print("[WingLoop] Unconverged Simulation, Good Luck")
+            allconverged = False
+        return allconverged
 
             
     def Outputting_The_State_File(self,statefile_filename=None):

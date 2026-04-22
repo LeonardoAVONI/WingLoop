@@ -52,7 +52,7 @@ def main():
 
     #     1) Declare some WingLoop simulation parameters
     Dt=0.01 # timestep [s]
-    N=300 # total iterations to perform
+    N=150 # total iterations to perform
     K=1     # each K iterations we send the ASWING state to PyControl. Leave to 1 if you do not want to add lag
 
     #     2) Open a WingLoop Instance
@@ -72,7 +72,7 @@ def main():
         UserController.m
     """
     
-    selector = "fmu"
+    selector = "py"
     if selector == "sim":
         print("[wingloop_testrun] controller = Simulink")
         control_dir = "simulink_controller"
