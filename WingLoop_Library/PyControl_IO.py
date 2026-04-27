@@ -416,11 +416,9 @@ def python2text(filename, control):
     with open(filename, "w") as f:
         f.write(content)
 
-
-def export_data_dict(data_dict, filepath):
+def export_data_dict(data_dict, filepath, compress=True):
     """
-    Serialise *data_dict* (as produced by read_aswing_file / initialize_data_dict)
-    to a human-readable JSON file.
+    Serialise *data_dict* to a JSON file, optionally gzip-compressed.
 
     numpy arrays (ModelStates entries) are converted to nested Python lists so
     that the file is plain JSON with no binary blobs.  All other values are
@@ -429,24 +427,25 @@ def export_data_dict(data_dict, filepath):
     Parameters
     ----------
     data_dict : dict   – the dictionary to export
-    filepath  : str    – destination path, e.g. "results/run01.json"
-                         The .json extension is appended automatically if absent.
+    filepath  : str    – destination path, e.g. "results/run01"
+                         Extension is added automatically:
+                           compress=True  → .json.gz
+                           compress=False → .json
+    compress  : bool   – gzip the output (default: True)
 
     Returns
     -------
-    filepath : str     – the path actually written (useful when the extension
-                         was added automatically)
-
-    Example
-    -------
-    export_data_dict(data_metric, "results/run01")
-    # → writes  results/run01.json
+    filepath : str     – the path actually written
     """
-    import json
-    import os
+    print("[IO FILEPATH]",filepath)
+    import json, gzip, os
 
-    if not filepath.endswith(".json"):
-        filepath = filepath + ".json"
+    # Strip any existing extension, then re-apply the correct one
+    for suffix in (".json.gz", ".json"):
+        if filepath.endswith(suffix):
+            filepath = filepath[: -len(suffix)]
+            break
+    filepath += ".json.gz" if compress else ".json"
 
     os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
 
@@ -464,71 +463,68 @@ def export_data_dict(data_dict, filepath):
             return [_make_serialisable(v) for v in obj]
         if isinstance(obj, dict):
             return {k: _make_serialisable(v) for k, v in obj.items()}
-        return obj   # str, float, int, bool, None  → already fine
+        return obj  # str, float, int, bool, None → already fine
 
-    # Removig useless parameters used for preallocation
-    serialisable = {k: v for k, v in data_dict.items() if not k.startswith('_')}
+    # Filter pre-allocation keys, then serialise
+    serialisable = {k: v for k, v in data_dict.items() if not k.startswith("_")}
     serialisable = _make_serialisable(serialisable)
-    
-    serialisable = _make_serialisable(data_dict)
 
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(serialisable, f, indent=2, ensure_ascii=False)
+    json_bytes = json.dumps(serialisable, indent=2, ensure_ascii=False).encode("utf-8")
+
+    if compress:
+        with gzip.open(filepath, "wb", compresslevel=6) as f:
+            f.write(json_bytes)
+    else:
+        with open(filepath, "wb") as f:
+            f.write(json_bytes)
 
     n_vars   = len(data_dict.get("ModelVariables", {}))
     n_states = len(data_dict.get("ModelStates", []))
+    size_kb  = os.path.getsize(filepath) / 1024
     print(f"[PyControl_IO] Saved → {filepath}  "
-          f"({n_vars} variables, {n_states} state snapshot(s))")
+          f"({n_vars} variables, {n_states} state snapshot(s), {size_kb:.1f} KB)")
     return filepath
 
-
 def import_data_dict(filepath):
-    """
-    Re-load a dictionary that was previously saved with export_data_dict().
+    import json, gzip, os
 
-    ModelStates entries (lists-of-lists in JSON) are converted back to numpy
-    arrays to match the structure produced by read_aswing_file.
-    All variable value lists are kept as plain Python lists, exactly as they
-    are when the dict is freshly populated.
+    # Strip any known extension to get the bare stem
+    stem = filepath
+    for suffix in (".json.gz", ".json"):
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+            break
 
-    Parameters
-    ----------
-    filepath : str  – path to the .json file (with or without extension)
+    # Try compressed first, then plain
+    candidates = [stem + ".json.gz", stem + ".json"]
 
-    Returns
-    -------
-    data_dict : dict  – ready-to-use dictionary, structurally identical to
-                        what read_aswing_file returns
+    resolved = next((p for p in candidates if os.path.exists(p)), None)
+    if resolved is None:
+        raise FileNotFoundError(
+            f"[PyControl_IO] Could not find file for: {filepath}\n"
+            f"  Tried: {candidates}"
+        )
 
-    Example
-    -------
-    data = import_data_dict("results/run01.json")
-    print_aswing_summary(data)
-    """
-    import json
-
-    if not filepath.endswith(".json"):
-        filepath = filepath + ".json"
-
-    with open(filepath, "r", encoding="utf-8") as f:
-        data_dict = json.load(f)
+    if resolved.endswith(".gz"):
+        with gzip.open(resolved, "rb") as f:
+            data_dict = json.loads(f.read().decode("utf-8"))
+    else:
+        with open(resolved, "r", encoding="utf-8") as f:
+            data_dict = json.load(f)
 
     # Restore numpy arrays for ModelStates
     raw_states = data_dict.get("ModelStates")
     if isinstance(raw_states, list) and raw_states:
-        # History mode  → list of arrays
         if isinstance(raw_states[0], list):
             data_dict["ModelStates"] = [np.array(s) for s in raw_states]
         else:
-            # Single snapshot stored as a flat list
             data_dict["ModelStates"] = np.array(raw_states)
 
     n_vars   = len(data_dict.get("ModelVariables", {}))
     n_states = len(data_dict.get("ModelStates", []))
-    print(f"[PyControl_IO] Loaded ← {filepath}  "
+    print(f"[PyControl_IO] Loaded ← {resolved}  "
           f"({n_vars} variables, {n_states} state snapshot(s))")
     return data_dict
-
 
 if __name__=="__main__":
     requested = [
@@ -632,6 +628,7 @@ if __name__=="__main__":
     export_data_dict(data_metric,"data_imperial.json")
     a = import_data_dict("data_imperial.json")
     print(a)
+    export_data_dict(a,"data_imperial.json",compress=False)
     #pprint.pprint(data_metric)
     """  
 
