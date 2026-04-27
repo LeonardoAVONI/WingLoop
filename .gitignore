@@ -40,6 +40,15 @@
 *.cvt
 
 # ---------------------------
+# Multimedia-related
+# ---------------------------
+*.gif
+*.mp4
+*.webm
+
+!docs/plot_wingloop_test_aircraft.gif
+!plot_wingloop_test_aircraft_strobe.png
+# ---------------------------
 # OS files
 # ---------------------------
 .DS_Store

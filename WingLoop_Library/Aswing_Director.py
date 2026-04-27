@@ -93,6 +93,7 @@ Changelog:
 import subprocess
 import os
 import time
+import sys
 import threading
 from queue import Queue, Empty
 import inotify_simple
@@ -353,6 +354,30 @@ class Aswing_Director:
         finally:
             inotify.rm_watch(wd)
             inotify.close()
+
+    def Load_Files_ASW(self,filename):
+        """
+        From the main ASWING menu, this function loads the file called "filename", 
+        according to its extension. When using ASWING from the terminal, any file 
+        extension can be loaded. Here the extension will make the difference
+
+        Args:
+            filename (string): filename to enter in ASWING from the main menu, including the extension
+        """
+
+        if filename.endswith(".asw"):
+            stdout, stderr = self.send_command_and_receive("load "+filename) #asw
+        elif filename.endswith(".pnt"):
+            stdout, stderr = self.send_command_and_receive("pget "+filename) # pnt
+        elif filename.endswith(".set"):
+            stdout, stderr = self.send_command_and_receive("sget "+filename) # set
+        elif filename.endswith(".state"):
+            stdout, stderr = self.send_command_and_receive("tget "+filename) # state
+        elif filename.endswith(".gust"):
+            stdout, stderr = self.send_command_and_receive("gget "+filename) # gust
+        else:
+            print("UNKNOWN FILENAME")
+            sys.exit()
 
 
     def quit_and_close_aswing(self):

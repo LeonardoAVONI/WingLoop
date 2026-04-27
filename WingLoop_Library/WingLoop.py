@@ -184,6 +184,7 @@ class WingLoop:
                 rebuild_fmu       = rebuild_fmu_file, # are we rebuilding the fmu file or not?
                 show_simulink     = show_simulink_window, # are we showing the simulink window during execution?
             )
+            self.fixed_stick = False
         else:
             self.fixed_stick = True
 

@@ -20,6 +20,7 @@ import numpy as np
 import time
 import os
 from WingLoop_Library import WingLoop
+from WingLoop_Library import VideoPlot_Generate_postscript_file, Generate_Analysis_Videos,Generate_Strobe_Plot
 
 
 def main():
@@ -130,11 +131,42 @@ def main():
     print("[wingloop_testrun] overhead time",-tfirst+tstart)
 
     #     8) Save the WingLoop and ASWING data
-    WL_Instance.Outputting_The_State_File(statefile_filename=None) #one can specify custom names
-    WL_Instance.Outputting_The_Results(custom_filename = None)     #one can specify custom names 
+    WL_Instance.Outputting_The_State_File(statefile_filename="test_filename") #one can specify custom names
+    WL_Instance.Outputting_The_Results(custom_filename = "test_filename")     #one can specify custom names 
 
     #     9) Close ASWING and WingLoop
     WL_Instance.Closing_WingLoop(removefiles = False)
+
+
+    #     10) Generate multimedia files
+
+    geometry_filename    = "wingloop_test_aircraft.asw"
+    reference_folder     = "."
+    results_filename     = "test_filename.state"
+    video_folder         = "."
+
+    ps_path = VideoPlot_Generate_postscript_file(
+        geometry_filename = geometry_filename,
+        reference_folder  = reference_folder,
+        input_files       = ["wingloop_test_aircraft.pnt", "wingloop_test_aircraft.set", results_filename],
+        video_folder      = video_folder
+    )
+
+    # For a quick, small web-ready version:
+    Generate_Analysis_Videos(ps_path, Dt=Dt, transpose=1, quality="medium")
+
+
+    frames_to_show = [1,50,100,150,200,251]
+
+    Generate_Strobe_Plot(
+        ps_filepath=ps_path,
+        indices=frames_to_show,
+        transpose=1,
+        quality="high"
+    )
+
+
+
 
 if __name__ == '__main__':
     main()

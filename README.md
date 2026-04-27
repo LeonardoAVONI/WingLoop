@@ -242,7 +242,20 @@ the MATLAB base workspace inside `UserController.m`, using `assignin('base', ...
 constructor. WingLoop guarantees that `UserController.m` is executed before the first
 `sim()` call, so all variables will be available when Simulink runs.
 
+---
+## Multimedia Export
 
+The **Wingloop** module also includes several utilities for analyzing ASWING outputs, including video generation and stroboscopic image export. These post-processing functions are executed at the end of the `wingloop_testrun.py` script and are implemented in `ASW_Helpers.py`.
+
+<div align="center">
+  <img src="./docs/plot_wingloop_test_aircraft.gif" alt="Flexible aircraft simulation video" width="100%" />
+  <p><em>Flexible aircraft simulation (video output).</em></p>
+</div>
+
+<div align="center">
+  <img src="./docs/plot_wingloop_test_aircraft_strobe.png" alt="Flexible aircraft stroboscopic visualization" width="100%" />
+  <p><em>Flexible aircraft simulation (stroboscopic view).</em></p>
+</div>
 
 ---
 ## License
