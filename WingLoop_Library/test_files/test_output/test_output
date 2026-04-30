@@ -256,10 +256,10 @@
       11.000000     15.696756      0.000000      0.000000      0.000000 
  STATEFILE SIZE:
       IITOT:         179
-      IITOT:           5
-      IITOT:         134
-      IITOT:          62
-      IITOT:         119
+      NJOIN:           5
+      NNTOT:         134
+     KPFREE:          62
+      KPTOT:         119
  STARTEDPRINTINGSTATES
       Distributed Variables: 18*IITOT
    6.39797135E-13

@@ -237,6 +237,25 @@ def _build_pattern(data_dict, rename_map):
         )?
     """, re.VERBOSE)
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def read_aswing_file(filepath, data_dict, rename_map=None,
                      RecordStateHistory=False, compiled_pattern=None):
 
@@ -244,52 +263,54 @@ def read_aswing_file(filepath, data_dict, rename_map=None,
         rename_map = {}
     pattern = compiled_pattern if compiled_pattern is not None else _build_pattern(data_dict, rename_map)
 
+    # Initialize ModelParameters if not already present
+    if "ModelParameters" not in data_dict:
+        data_dict["ModelParameters"] = {}
+
     with open(filepath, "r") as f:
         lines = f.readlines()
 
     data_dict["ModelName"] = lines[2].strip()
 
     recording_states = False
+    reading_size = False
     states = []
     converged = False
-    reading_size = False
 
     for line in lines:
         stripped = line.strip()
 
+        # 1. Handle Status
         if "Status:" in stripped:
             converged = "Converged" in stripped
 
-        # 2. Handle STATEFILE SIZE (Parameters)
+        # 2. Extract Model Parameters from STATEFILE SIZE
         if "STATEFILE SIZE:" in stripped:
             reading_size = True
             continue
-        if reading_size and ":" in stripped:
-            # Check if we've reached the end of this section
+        
+        if reading_size:
             if "STARTEDPRINTINGSTATES" in stripped:
                 reading_size = False
-            else:
+                # Fall through to the STARTEDPRINTINGSTATES block below
+            elif ":" in stripped:
                 try:
                     parts = stripped.split(":")
                     param_name = parts[0].strip()
-                    param_value = int(float(parts[1].strip())) # Handles float strings to int
+                    # Convert to float then int to handle any scientific notation
+                    param_value = int(float(parts[1].strip()))
                     data_dict["ModelParameters"][param_name] = param_value
                 except (ValueError, IndexError):
                     pass
                 continue
 
+        # 3. Handle State Vector Recording[cite: 1]
         if "STARTEDPRINTINGSTATES" in stripped:
             recording_states = True
-            reading_size = False # Safety shutoff
+            reading_size = False 
             states = []
             continue
-        #if "ENDEDPRINTINGSTATES" in stripped:
-        #    recording_states = False
-        #    if RecordStateHistory:
-        #        data_dict["ModelStates"].append(np.array(states))
-        #    else:
-        #        data_dict["ModelStates"] = np.array(states)
-        #    continue
+
         if "ENDEDPRINTINGSTATES" in stripped:
             recording_states = False
             state_array = np.array(states, dtype=np.float64)
@@ -298,51 +319,64 @@ def read_aswing_file(filepath, data_dict, rename_map=None,
                 idx = data_dict.get("_state_count", 0)
 
                 if N is not None:
-                    # First call: preallocate now that we know state length
                     if idx == 0:
                         data_dict["ModelStates"] = np.empty((N, len(state_array)), dtype=np.float64)
                     data_dict["ModelStates"][idx] = state_array
                     data_dict["_state_count"] = idx + 1
                 else:
-                    # N unknown: original list-of-arrays fallback
-                    if not isinstance(data_dict["ModelStates"], list):
-                        data_dict["ModelStates"] = list(data_dict["ModelStates"])
+                    if not isinstance(data_dict.get("ModelStates"), list):
+                        data_dict["ModelStates"] = []
                     data_dict["ModelStates"].append(state_array)
             else:
                 data_dict["ModelStates"] = state_array
             continue
+
         if recording_states:
-            # This try-except naturally "skips" lines like 'Distributed Variables:...'
-            # because float() will fail on them.
+            # Simple skip: if the line contains text (headers), float() will fail[cite: 1]
             try:
-                # split() handles any amount of whitespace
                 line_values = [float(x) for x in stripped.split()]
+                print(line_values)
                 if line_values:
                     states.extend(line_values)
             except ValueError:
-                # This is where 'Distributed Variables', 'Joints:', etc. are ignored
+                # Skips "Distributed Variables", "Joints:", "Circulation:", etc.[cite: 1]
                 pass
             continue
 
-        # Extract variables
-        for match in pattern.finditer(line):
-            var_name = match.group(1).strip()
-            value = float(match.group(2))
-            unit_candidate = match.group(3)
+        # 4. Extract standard variables (skip if we are in special sections)
+        if not reading_size and not recording_states:
+            for match in pattern.finditer(line):
+                var_name = match.group(1).strip()
+                value = float(match.group(2))
+                unit_candidate = match.group(3)
 
-            internal_name = rename_map.get(var_name, var_name)
+                internal_name = rename_map.get(var_name, var_name)
 
-            if internal_name in data_dict["ModelVariables"]:
-                data_dict["ModelVariables"][internal_name]["values"].append(value)
-
-                if (data_dict["ModelVariables"][internal_name]["unit"] is None and
-                        unit_candidate is not None):
-                    data_dict["ModelVariables"][internal_name]["unit"] = unit_candidate
+                if internal_name in data_dict["ModelVariables"]:
+                    data_dict["ModelVariables"][internal_name]["values"].append(value)
+                    if (data_dict["ModelVariables"][internal_name]["unit"] is None and
+                            unit_candidate is not None):
+                        data_dict["ModelVariables"][internal_name]["unit"] = unit_candidate
 
     if "IsConverged" in data_dict["ModelVariables"]:
         data_dict["ModelVariables"]["IsConverged"]["values"].append(converged)
 
     return data_dict
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 def print_aswing_summary(data_dict, max_vars_per_line=4):
     print("\n" + "="*70)
@@ -669,7 +703,7 @@ if __name__=="__main__":
     print(a)
     export_data_dict(a,"data_imperial.json",compress=False)
 
-    data_test = read_aswing_file("test_files/test_output/ASWING_test_output_imperial", data_imperial, rename_map)
+    data_test = read_aswing_file("test_files/test_output/test_output", data_imperial, rename_map)
     print_aswing_summary(data_test)
     export_data_dict(data_test,"data_test.json")
     export_data_dict(data_test,"data_test.json",compress=False)
