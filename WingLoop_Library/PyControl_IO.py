@@ -335,7 +335,6 @@ def read_aswing_file(filepath, data_dict, rename_map=None,
             # Simple skip: if the line contains text (headers), float() will fail[cite: 1]
             try:
                 line_values = [float(x) for x in stripped.split()]
-                print(line_values)
                 if line_values:
                     states.extend(line_values)
             except ValueError:
