@@ -209,6 +209,7 @@ import glob
 def Generate_Analysis_Videos(
     ps_filepath, 
     Dt=0.02, 
+    videofile ="gif",
     transpose=None, 
     quality="medium", 
     keep_frames=False
@@ -264,40 +265,43 @@ def Generate_Analysis_Videos(
         vf_base += f"transpose={transpose},"
 
     # 3. Step 2: Generate MP4
-    output_mp4 = base_path + ".mp4"
-    print(f"--- Generating MP4 ({quality}) ---")
-    mp4_vf = vf_base + "pad=ceil(iw/2)*2:ceil(ih/2)*2" # Ensure even dimensions
-    mp4_cmd = [
-        "ffmpeg", "-y", "-framerate", str(fps), "-i", frame_pattern,
-        "-vf", mp4_vf, "-c:v", "libx264", "-crf", str(cfg['crf_mp4']),
-        "-pix_fmt", "yuv420p", output_mp4
-    ]
-    _run(mp4_cmd, "FFmpeg MP4 failed")
+    if videofile == "mp4":
+        output_mp4 = base_path + ".mp4"
+        print(f"--- Generating MP4 ({quality}) ---")
+        mp4_vf = vf_base + "pad=ceil(iw/2)*2:ceil(ih/2)*2" # Ensure even dimensions
+        mp4_cmd = [
+            "ffmpeg", "-y", "-framerate", str(fps), "-i", frame_pattern,
+            "-vf", mp4_vf, "-c:v", "libx264", "-crf", str(cfg['crf_mp4']),
+            "-pix_fmt", "yuv420p", output_mp4
+        ]
+        _run(mp4_cmd, "FFmpeg MP4 failed")
 
-    # 4. Step 3: Generate GIF (High Quality Palette)
-    output_gif = base_path + ".gif"
-    print(f"--- Generating GIF ({quality}) ---")
-    gif_vf = (
-        vf_base + 
-        f"scale={cfg['width']}:-1:flags=lanczos,split[s0][s1];"
-        "[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=3"
-    )
-    gif_cmd = [
-        "ffmpeg", "-y", "-framerate", str(fps), "-i", frame_pattern,
-        "-vf", gif_vf, output_gif
-    ]
-    _run(gif_cmd, "FFmpeg GIF failed")
+    elif videofile == "gif":
+        # 4. Step 3: Generate GIF (High Quality Palette)
+        output_gif = base_path + ".gif"
+        print(f"--- Generating GIF ({quality}) ---")
+        gif_vf = (
+            vf_base + 
+            f"scale={cfg['width']}:-1:flags=lanczos,split[s0][s1];"
+            "[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=3"
+        )
+        gif_cmd = [
+            "ffmpeg", "-y", "-framerate", str(fps), "-i", frame_pattern,
+            "-vf", gif_vf, output_gif
+        ]
+        _run(gif_cmd, "FFmpeg GIF failed")
 
-    # 5. Step 4: Generate WebM
-    output_webm = base_path + ".webm"
-    print(f"--- Generating WebM ({quality}) ---")
-    webm_cmd = [
-        "ffmpeg", "-y", "-framerate", str(fps), "-i", frame_pattern,
-        "-vf", vf_base.rstrip(','), # Remove trailing comma if no other filters
-        "-c:v", "libvpx-vp9", "-crf", str(cfg['crf_webm']), "-b:v", "0",
-        output_webm
-    ]
-    _run(webm_cmd, "FFmpeg WebM failed")
+    elif videofile == "webp":
+        # 5. Step 4: Generate WebM
+        output_webm = base_path + ".webm"
+        print(f"--- Generating WebM ({quality}) ---")
+        webm_cmd = [
+            "ffmpeg", "-y", "-framerate", str(fps), "-i", frame_pattern,
+            "-vf", vf_base.rstrip(','), # Remove trailing comma if no other filters
+            "-c:v", "libvpx-vp9", "-crf", str(cfg['crf_webm']), "-b:v", "0",
+            output_webm
+        ]
+        _run(webm_cmd, "FFmpeg WebM failed")
 
     # 6. Cleanup
     if not keep_frames:
@@ -305,7 +309,12 @@ def Generate_Analysis_Videos(
         shutil.rmtree(frames_dir)
     
     print(f"Done. Files created in: {output_dir}")
-    return output_mp4, output_gif, output_webm
+    if videofile == "mp4":
+        return output_mp4
+    elif videofile == "gif":
+        return output_gif
+    elif videofile == "webp":
+        return output_webm
 
 def _check_dependency(cmd, install_hint):
     if shutil.which(cmd) is None:
@@ -319,12 +328,11 @@ def _run(cmd, error_prefix):
 
 
 
-
 def Generate_Strobe_Plot(
     ps_filepath, 
     indices, 
     transpose=None, 
-    quality="high", 
+    dpi=300, # Defaulted to our new ultra preset
     output_suffix="_strobe",
     mask_region=[50, 2220, 1016, 2570] 
 ):
@@ -335,40 +343,37 @@ def Generate_Strobe_Plot(
     strobe_dir = base_path + "_strobe_temp"
     output_img = base_path + output_suffix + ".png"
     
-    presets = {
-        "high":   {"dpi": 300},
-        "medium": {"dpi": 150},
-        "low":    {"dpi": 72}
-    }
-    cfg = presets.get(quality, presets["medium"])
+    # 1. ADDED "ULTRA" and "MAX" PRESETS
     os.makedirs(strobe_dir, exist_ok=True)
 
-    
-    # 1. Rasterize (Using standard settings that work when mask is None)
     page_list = ",".join(map(str, indices))
     frame_pattern = os.path.join(strobe_dir, "strobe_%04d.png")
+    
+    # 2. INJECTED ANTI-ALIASING FLAGS
     gs_cmd = [
         "gs", "-dBATCH", "-dNOPAUSE", "-dQUIET", "-sDEVICE=png16m",
-        f"-r{cfg['dpi']}", f"-sPageList={page_list}",
+        f"-r{dpi}", 
+        "-dTextAlphaBits=4",     # Maximum text anti-aliasing
+        "-dGraphicsAlphaBits=4", # Maximum vector/line anti-aliasing
+        "-dAlignToPixels=0",     # Improves sub-pixel alignment for thin plot lines
+        f"-sPageList={page_list}",
         f"-sOutputFile={frame_pattern}", ps_filepath
     ]
     _run(gs_cmd, "Ghostscript extraction failed")
 
-    # 2. Get frames
+    # 3. Get frames
     extracted_frames = sorted(glob.glob(os.path.join(strobe_dir, "*.png")))
     
-    # 3. Build filter chain with RGB enforcement
+    # 4. Build filter chain with RGB enforcement
     inputs = []
     filter_chain = ""
     
-    # CRITICAL FIX: We force the first input to RGB24 to prevent the Green shift
     filter_chain += "[0:v]format=rgb24[v0_rgb];"
     
     for i, frame in enumerate(extracted_frames):
         inputs.extend(["-i", frame])
         if i == 0: continue
         
-        # We also force each subsequent frame to RGB before blending
         filter_chain += f"[{i}:v]format=rgb24[v{i}_rgb];"
         
         prev_link = "[v0_rgb]" if i == 1 else f"[blended{i-1}]"
@@ -378,27 +383,27 @@ def Generate_Strobe_Plot(
 
     current_link = f"[blended{len(extracted_frames)-1}]"
 
-    # 4. Rotation
+    # 5. Rotation
     if transpose:
         filter_chain += f"{current_link}transpose={transpose}[transposed];"
         current_link = "[transposed]"
 
-    # 5. Apply the White Mask (Now safe from color shifts)
+    # 6. Apply the White Mask
     if mask_region:
         x1, y1, x2, y2 = mask_region
         w, h = abs(x2 - x1), abs(y2 - y1)
         fx, fy = min(x1, x2), min(y1, y2)
-        # Added format=rgb24 again here just to be absolutely sure before drawing
         filter_chain += f"{current_link}format=rgb24,drawbox=x={fx}:y={fy}:w={w}:h={h}:color=white:t=fill[masked]"
         map_link = "[masked]"
     else:
         map_link = current_link
 
-    # 6. Final Execution
+    # 7. Final Execution
+    # FFmpeg automatically uses lossless zlib compression for PNG outputs
     ffmpeg_cmd = ["ffmpeg", "-y"] + inputs + [
         "-filter_complex", filter_chain.rstrip(";"),
         "-map", map_link,
-        "-pix_fmt", "rgb24", # Ensure output file is also RGB
+        "-pix_fmt", "rgb24", 
         output_img
     ]
     _run(ffmpeg_cmd, "FFmpeg failed")

@@ -177,11 +177,18 @@ def initialize_data_dict(requested, rename_map=None, latex=None, N_steps = None)
     
     data = {
         "ModelName": None,
+        "ModelParameters": {},
         "ModelStates": [],        # becomes a 2D numpy array after first state is seen
         "_N_steps":    N_steps,   # None = unknown, fall back to list append
         "_state_count": 0,        # row index for preallocated array
         "ModelVariables": {}
     }
+
+    data["ModelParameters"]["IITOT"] = None
+    data["ModelParameters"]["NJOIN"] = None
+    data["ModelParameters"]["NNTOT"] = None
+    data["ModelParameters"]["KPFREE"] = None
+    data["ModelParameters"]["KPTOT"] = None
 
     # Use the final (clean) internal name as dict key for consistency with units/latex
     for raw_var in requested:
@@ -190,7 +197,7 @@ def initialize_data_dict(requested, rename_map=None, latex=None, N_steps = None)
             "values": [],#np.empty(num)
             "unit": units.get(internal_var) or units.get(raw_var),
             "latex": latex.get(internal_var) or latex.get(raw_var)
-        }
+        } 
 
     return data
 
@@ -245,6 +252,7 @@ def read_aswing_file(filepath, data_dict, rename_map=None,
     recording_states = False
     states = []
     converged = False
+    reading_size = False
 
     for line in lines:
         stripped = line.strip()
@@ -252,8 +260,27 @@ def read_aswing_file(filepath, data_dict, rename_map=None,
         if "Status:" in stripped:
             converged = "Converged" in stripped
 
+        # 2. Handle STATEFILE SIZE (Parameters)
+        if "STATEFILE SIZE:" in stripped:
+            reading_size = True
+            continue
+        if reading_size and ":" in stripped:
+            # Check if we've reached the end of this section
+            if "STARTEDPRINTINGSTATES" in stripped:
+                reading_size = False
+            else:
+                try:
+                    parts = stripped.split(":")
+                    param_name = parts[0].strip()
+                    param_value = int(float(parts[1].strip())) # Handles float strings to int
+                    data_dict["ModelParameters"][param_name] = param_value
+                except (ValueError, IndexError):
+                    pass
+                continue
+
         if "STARTEDPRINTINGSTATES" in stripped:
             recording_states = True
+            reading_size = False # Safety shutoff
             states = []
             continue
         #if "ENDEDPRINTINGSTATES" in stripped:
@@ -285,9 +312,15 @@ def read_aswing_file(filepath, data_dict, rename_map=None,
                 data_dict["ModelStates"] = state_array
             continue
         if recording_states:
+            # This try-except naturally "skips" lines like 'Distributed Variables:...'
+            # because float() will fail on them.
             try:
-                states.extend(map(float, stripped.split()))
-            except:
+                # split() handles any amount of whitespace
+                line_values = [float(x) for x in stripped.split()]
+                if line_values:
+                    states.extend(line_values)
+            except ValueError:
+                # This is where 'Distributed Variables', 'Joints:', etc. are ignored
                 pass
             continue
 
@@ -317,7 +350,13 @@ def print_aswing_summary(data_dict, max_vars_per_line=4):
     print("="*70)
 
     print(f"\nModel Name      : {data_dict.get('ModelName')}")
-
+    print("Model Parameters:")
+    print("     IITOT",data_dict["ModelParameters"]["IITOT"]   )
+    print("     NJOIN",data_dict["ModelParameters"]["NJOIN"]   )
+    print("     NNTOT",data_dict["ModelParameters"]["NNTOT"]   )
+    print("     KPFREE", data_dict["ModelParameters"]["KPFREE"])
+    print("     KPTOT", data_dict["ModelParameters"]["KPTOT"]  )
+    print("\n")
     model_states = data_dict.get("ModelStates")
     if isinstance(model_states, list):
         print(f"ModelStates history length: {len(model_states)}")
@@ -629,6 +668,12 @@ if __name__=="__main__":
     a = import_data_dict("data_imperial.json")
     print(a)
     export_data_dict(a,"data_imperial.json",compress=False)
+
+    data_test = read_aswing_file("test_files/test_output/ASWING_test_output_imperial", data_imperial, rename_map)
+    print_aswing_summary(data_test)
+    export_data_dict(data_test,"data_test.json")
+    export_data_dict(data_test,"data_test.json",compress=False)
+
     #pprint.pprint(data_metric)
     """  
 
