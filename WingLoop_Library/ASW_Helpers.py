@@ -418,6 +418,7 @@ def Generate_Strobe_Plot(
 def Plot_Timeseries(filenames, indices, names, legend_names=None, use_iteration=False):
     """
     Plots specified columns from one or multiple simulation log files as synchronized subplots.
+    Styled cleanly with serif fonts and inward ticks matching your publication layout.
     
     Parameters:
     -----------
@@ -449,40 +450,59 @@ def Plot_Timeseries(filenames, indices, names, legend_names=None, use_iteration=
 
     num_plots = len(indices)
     
-    # Create subplots sharing the same X-axis
-    fig, axes = plt.subplots(num_plots, 1, sharex=True, figsize=(10, 2.2 * num_plots))
+    # ── APPLY CUSTOM STYLING FROM YOUR TEMPLATE ─────────────────────────────────
+    custom_style = {
+        "font.family":       "serif",
+        "font.size":         11,
+        "axes.labelsize":    12,
+        "legend.fontsize":   10,
+        "xtick.direction":   "in",
+        "ytick.direction":   "in",
+        "axes.grid":         True,
+        "grid.alpha":        0.3,
+        "grid.linestyle":    "--",
+    }
     
-    # Ensure axes is always iterable (even if only 1 plot is generated)
-    if num_plots == 1:
-        axes = [axes]
-
-    # Loop through each file to plot them sequentially on the same axes
-    for file_idx, filename in enumerate(filenames):
-        # Load data skipping comment lines
-        data = np.loadtxt(filename, comments='#')
+    with plt.style.context(custom_style):
+        # 10 is width, height matches your layout scale (approx 2-2.2 per subplot)
+        fig, axes = plt.subplots(num_plots, 1, sharex=True, figsize=(10, 2 * num_plots))
         
-        # Determine X-axis (Column 1 is index 0, Column 2 is index 1)
-        x_col = 0 if use_iteration else 1
-        x_data = data[:, x_col]
-        
-        # Plot each requested quantity for this specific file
-        for ax, idx, y_label in zip(axes, indices, names):
-            # Shift index by +1 because user index 1 = data column index 2 (Theta)
-            # data[:, 0] is i, data[:, 1] is t, data[:, 2] is Theta
-            data_col_idx = idx + 1 
-            y_data = data[:, data_col_idx]
-            
-            ax.plot(x_data, y_data, linewidth=1.5, label=legend_names[file_idx])
-            ax.set_ylabel(y_label)
-            ax.grid(True, linestyle='--', alpha=0.5)
+        # Ensure axes is always iterable (even if only 1 plot is generated)
+        if num_plots == 1:
+            axes = [axes]
 
-    # Format the x-axis on the bottom-most subplot
-    x_label = "Iteration Number [#]" if use_iteration else "Time [s]"
-    axes[-1].set_xlabel(x_label)
-    
-    # Add a legend to every subplot (only needed if there are multiple files)
-    if len(filenames) > 1:
-        axes[0].legend(loc="best")
+        # Loop through each file to plot them sequentially on the same axes
+        for file_idx, filename in enumerate(filenames):
+            # Load data skipping comment lines
+            data = np.loadtxt(filename, comments='#')
             
-    plt.tight_layout()
-    plt.show()
+            # Determine X-axis (Column 1 is index 0, Column 2 is index 1)
+            x_col = 0 if use_iteration else 1
+            x_data = data[:, x_col]
+            
+            # Plot each requested quantity for this specific file
+            for ax, idx, y_label in zip(axes, indices, names):
+                # Shift index by +1 because user index 1 = data column index 2 (Theta)
+                # data[:, 0] is i, data[:, 1] is t, data[:, 2] is Theta
+                data_col_idx = idx + 1 
+                y_data = data[:, data_col_idx]
+                
+                ax.plot(x_data, y_data, linewidth=1.5, label=legend_names[file_idx])
+                ax.set_ylabel(y_label)
+
+        # ── POST-PROCESSING COSMETIC ADJUSTMENTS ──────────────────────────────
+        for ax in axes:
+            # Subtle grey border frame lines as seen in your template
+            for spine in ax.spines.values():
+                spine.set_edgecolor("#aaaaaa")
+                
+        # Add a legend to every subplot if there are multiple lines/files
+        if len(filenames) > 1:
+            axes[0].legend(loc="best", framealpha=0.9)
+
+        # Format the x-axis on the bottom-most subplot
+        x_label = "Iteration Number [#]" if use_iteration else "Time $t$ [s]"
+        axes[-1].set_xlabel(x_label)
+        
+        plt.tight_layout()
+        plt.show()
