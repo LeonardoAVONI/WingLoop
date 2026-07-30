@@ -329,19 +329,76 @@ class WingLoop:
         stdout, stderr = self.ASW_handler.send_command_and_receive("G")
         stdout, stderr = self.ASW_handler.send_command_and_receive("\n")
         
-    def Performing_K_iterations_ASWING(self, Dt_aswing, K_aswing, custom_timer = None):
+    def _Write_Output_File(self, custom_timer=None):
+        """
+        Asks ASWING to write its current state to the "output" file (overwriting
+        any previous content), and blocks until the new file is fully (re)written.
+
+        Factored out of Performing_K_iterations_ASWING so the non-convergence
+        retry path can re-request the state after a retry without duplicating
+        the write/wait logic.
+        """
+        #deletes the previously written data from the output file, it
+        # now will have a length 0
+        stdout, stderr = self.ASW_handler.send_command_and_receive("W",custom_timer=custom_timer) # write the data
+        with open('output', 'w') as file:
+            pass
+        #checkig that the file is still there, but his content has been deleted
+        while os.stat("output").st_size:
+            time.sleep(0.0000001)
+        # Now that we know the content of the previous input file was
+        # deleted, we can write the next one inside it
+        stdout, stderr, time_taken = self.ASW_handler.send_writefile_command_and_receive_old(filename="output",
+                                                                                            custom_timer=custom_timer,
+                                                                                            append_or_overwrite="O")
+        return stdout, stderr, time_taken
+
+    def _Pop_Last_Recorded_State(self):
+        """
+        Undoes the most recent read_aswing_file() append: pops the last value
+        from every ModelVariables series (including IsConverged) and rewinds
+        ModelStates by one row/entry.
+
+        Used to discard a non-converged read before it is replaced by the
+        result of the finer-resolution retry.
+        """
+        log = self.WingLoop_LogFile
+        for var in log["ModelVariables"].values():
+            if var["values"]:
+                var["values"].pop()
+        if isinstance(log["ModelStates"], list):
+            if log["ModelStates"]:
+                log["ModelStates"].pop()
+        elif log.get("_state_count", 0) > 0:
+            log["_state_count"] -= 1
+
+    def _Last_State_Converged(self):
+        """
+        Convergence status of the most recently recorded state.
+        Defaults to True (converged) if no state has been recorded yet.
+        """
+        values = self.WingLoop_LogFile["ModelVariables"]["IsConverged"]["values"]
+        return bool(values[-1]) if values else True
+
+    def Performing_K_iterations_ASWING(self, Dt_aswing, K_aswing, custom_timer = None, retry_substeps = 10):
 
         """
         Works from the Oper menu, made to append K_aswing iterations with control to current simulation
         The function does the following:
             -writes current "output" state from ASWING to a text file
             -obtains from such state the (instantaneous) variables used for control
-            -appends the instantaneous variables to the previous time series of previously appended values. 
+            -appends the instantaneous variables to the previous time series of previously appended values.
                 This operation can be done Python, but here it's done in Python
             -asking the PyControl.UAV_control_Strategy function for the controls needed at the next time step
             -writing the "input" text file to be used by ASWING for control (defining elevator inputs, engine input...)
             -send K_aswing iterations in ASWING, with Dt intervals with the generated "input" control text file
 
+        If the point ASWING just wrote did not converge, it is deleted ("-") and
+        re-attempted once, covering the same simulated time (Dt_aswing*K_aswing)
+        in `retry_substeps` smaller steps. This resolves cases where a single
+        large step contains a hard-to-resolve time-derivative that a finer
+        step handles fine. If the retry still does not converge, the
+        non-converged state is kept and reported via IsConverged as usual.
         """
         # we check if we are doing the very first time-transient simulation
         if self.count: 
@@ -381,19 +438,10 @@ class WingLoop:
                                                                                                     custom_timer=custom_timer)
 
             if state_file_write_options == "overwrite":
-                #deletes the previously written data from the output file, it 
-                # now will have a length 0 
-                stdout, stderr = self.ASW_handler.send_command_and_receive("W",custom_timer=custom_timer) # write the data
-                with open('output', 'w') as file: 
-                    pass
-                #checkig that the file is still there, but his content has been deleted
-                while os.stat("output").st_size:
-                    time.sleep(0.0000001)
-                
-                # The following method was checking the length modification of 
+                # The following method was checking the length modification of
                 # the previous file, to understand if it was done writing or no
-                # However, THE OVERWRITE MODIFICATION, THAT RELIES ON CHECKING 
-                # THE output FILE STATE (check if it was modified or not) ENDED 
+                # However, THE OVERWRITE MODIFICATION, THAT RELIES ON CHECKING
+                # THE output FILE STATE (check if it was modified or not) ENDED
                 # UP NOT WORKING
                 """
                     sys.exit()
@@ -401,19 +449,46 @@ class WingLoop:
                     #    time.sleep(0.00001)
                     #last_modification_time = os.stat("output").st_mtime
                 """
-                # Now that we know the content of the previous input file was 
-                # deleted, we can write the next one inside it
-                stdout, stderr , time_taken= self.ASW_handler.send_writefile_command_and_receive_old(filename="output",  
-                                                                                                    custom_timer=custom_timer,
-                                                                                                    append_or_overwrite="O")
+                stdout, stderr, time_taken = self._Write_Output_File(custom_timer=custom_timer)
         starttime = time.time()
         # the following line updates the perceived information
-        self.WingLoop_LogFile = read_aswing_file("output", 
-                                                    self.WingLoop_LogFile, 
+        self.WingLoop_LogFile = read_aswing_file("output",
+                                                    self.WingLoop_LogFile,
                                                     self.rename_map,
                                                     RecordStateHistory=True,
                                                 compiled_pattern=self._compiled_pattern)
-        
+
+        # non-convergence recovery: delete the failed point and retry once at
+        # finer resolution, covering the same simulated time in more, smaller steps
+        if not self._Last_State_Converged():
+            print("[WingLoop] step =", self.count, "did not converge; retrying with",
+                  retry_substeps, "substeps of Dt =", (Dt_aswing*K_aswing)/retry_substeps)
+            self._Pop_Last_Recorded_State()
+
+            sub_dt = (Dt_aswing * K_aswing) / retry_substeps
+            if self.count:
+                retry_command = str(sub_dt)+" -"+str(retry_substeps)
+            else:
+                retry_command = str(sub_dt)+" "+str(retry_substeps)
+
+            # delete the non-converged point, then retry towards the same simulated
+            # time using the same control input, but in smaller substeps
+            stdout, stderr = self.ASW_handler.send_command_and_receive("-", custom_timer=custom_timer)
+            stdout, stderr = self.ASW_handler.send_command_and_receive(x_command, custom_timer=custom_timer)
+            stdout, stderr = self.ASW_handler.send_command_and_receive(retry_command, custom_timer=custom_timer)
+
+            self._Write_Output_File(custom_timer=custom_timer)
+            self.WingLoop_LogFile = read_aswing_file("output",
+                                                        self.WingLoop_LogFile,
+                                                        self.rename_map,
+                                                        RecordStateHistory=True,
+                                                    compiled_pattern=self._compiled_pattern)
+
+            if self._Last_State_Converged():
+                print("[WingLoop] retry converged")
+            else:
+                print("[WingLoop] retry still did not converge")
+
         # plot things now, if needed, or update the plot
         if self.WingLoop_IsPlotting and self.LivePlot:
             self.WingLoop_Liveplot.update(self.WingLoop_LogFile)
@@ -470,6 +545,11 @@ class WingLoop:
             - The method assumes that the ASWING handler (`self.ASW_handler`) is properly initialized and
                 capable of sending commands to ASWING.
             - The `self.count` variable tracks the number of iterations already performed.
+            - `stop_if_notconverged` controls what happens when a step still does not converge after
+                the single retry performed by Performing_K_iterations_ASWING: if True, the simulation
+                stops as soon as such a step is detected; if False, the simulation keeps running
+                regardless, and the returned `allconverged` reflects whether any step ever failed to
+                converge (even after retry).
         Attributes:
             self.count (int): Tracks the number of iterations performed so far.
             self.print_output (bool): If True, prints progress information during the simulation.
@@ -511,17 +591,18 @@ class WingLoop:
 
 
         ### PERFORMING ALL INTERMEDIATE ITERATIONS (between L and N)
+        breaksim = False
         while not (self.count + K >= N):
 
-            breaksim = any(not v for v in self.WingLoop_LogFile["ModelVariables"]["IsConverged"]["values"])
-            if not breaksim:
-                # performing a number K of iteration (write output of the previous state, obtain the control command, send to aswing, perform K aswing iterations)
-                if self.print_output:
-                    print("[WingLoop] iterations: from", self.count, " to ",self.count+K, " (step of ", K,")")
-                self.Performing_K_iterations_ASWING(Dt_aswing=Dt, K_aswing=K)
-                #incrementing the counter
-                self.count += K
-            else:
+            # performing a number K of iteration (write output of the previous state, obtain the control command, send to aswing, perform K aswing iterations)
+            if self.print_output:
+                print("[WingLoop] iterations: from", self.count, " to ",self.count+K, " (step of ", K,")")
+            self.Performing_K_iterations_ASWING(Dt_aswing=Dt, K_aswing=K)
+            #incrementing the counter
+            self.count += K
+
+            if stop_if_notconverged and not self._Last_State_Converged():
+                breaksim = True
                 break
 
         if not breaksim:
@@ -531,15 +612,21 @@ class WingLoop:
                     print("Final iterations: from", self.count, " to ",N, " (step of ", N - self.count,")")
                 self.Performing_K_iterations_ASWING(Dt_aswing=Dt, K_aswing=N-self.count)
                 self.count += N-self.count
+                if stop_if_notconverged and not self._Last_State_Converged():
+                    breaksim = True
             if self.print_output:
                 print("[WingLoop] Final Counter",self.count)
-            breaksim = any(not v for v in self.WingLoop_LogFile["ModelVariables"]["IsConverged"]["values"])
 
-        if not breaksim:
-            allconverged = True
-        else:
+        # a step is only left non-converged in the history if the (single) retry
+        # in Performing_K_iterations_ASWING also failed, so this reflects genuine,
+        # unrecovered non-convergence regardless of whether the sim was stopped early
+        allconverged = not any(not v for v in self.WingLoop_LogFile["ModelVariables"]["IsConverged"]["values"])
+
+        if breaksim:
+            print("[WingLoop] Unconverged Simulation, stopping early (stop_if_notconverged=True)")
+        elif not allconverged:
             print("[WingLoop] Unconverged Simulation, Good Luck")
-            allconverged = False
+
         return allconverged
 
             
