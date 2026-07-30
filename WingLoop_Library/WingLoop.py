@@ -403,7 +403,7 @@ class WingLoop:
                 """
                 # Now that we know the content of the previous input file was 
                 # deleted, we can write the next one inside it
-                stdout, stderr , time_taken= self.ASW_handler.send_writefile_command_and_receive(filename="output",  
+                stdout, stderr , time_taken= self.ASW_handler.send_writefile_command_and_receive_old(filename="output",  
                                                                                                     custom_timer=custom_timer,
                                                                                                     append_or_overwrite="O")
         starttime = time.time()
@@ -550,7 +550,13 @@ class WingLoop:
             statefile_filename = self.WingLoop_LogFile["ModelName"]+".state"
         else:
             statefile_filename = statefile_filename+".state"
-        stdout, stderr = self.ASW_handler.send_command_and_receive(statefile_filename,custom_timer=1)
+        if os.path.exists(statefile_filename):
+            self.ASW_handler.send_writefile_command_and_receive_old(statefile_filename,
+                                                                                     append_or_overwrite="O")
+        else:
+            self.ASW_handler.send_writefile_command_and_receive_old(statefile_filename,
+                                                                                     append_or_overwrite=None)
+            
         print("[WingLoop] Saved → "+statefile_filename)
 
 ### OUTPUT THE RESULTS

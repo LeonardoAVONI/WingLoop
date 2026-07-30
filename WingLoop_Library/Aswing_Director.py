@@ -296,7 +296,7 @@ class Aswing_Director:
             a = a+c
             b = b+d       
         
-        timeout=5
+        timeout=100
         last_size = -1
         
         # for the following: decoupling the "is the file there" part, with the "how long is it" helps speed up slightly the time
@@ -424,8 +424,8 @@ if __name__=="__main__":
     stdout, stderr = ASW_handler.send_command_and_receive("H")
     stdout, stderr = ASW_handler.send_command_and_receive("x")
     stdout, stderr = ASW_handler.send_command_and_receive("w")
-    stdout, stderr = ASW_handler.send_command_and_receive("test")
-#    stdout, stderr = ASW_handler.send_writefile_command_and_receive(filename = "test",append_or_overwrite="A")
+#    stdout, stderr = ASW_handler.send_command_and_receive("test")
+    stdout, stderr = ASW_handler.send_writefile_command_and_receive_old(filename = "test",append_or_overwrite="O")
     stdout, stderr = ASW_handler.send_command_and_receive("\n")
 
     print("I")
