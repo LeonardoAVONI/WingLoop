@@ -302,6 +302,8 @@ class Aswing_Director:
         # for the following: decoupling the "is the file there" part, with the "how long is it" helps speed up slightly the time
         # also, when checking the file length, there are actually 2 terations: first the file is length 0, then final length; no in-between apparently
 
+        print("[send_wri..ve_old] Current working path:",os.getcwd())
+        print("[send_wri..ve_old] File we are currently looking for:",filename)
         while time.time() - internal_start_time < timeout:
             if os.path.exists(filename):
                 #buffer_time_internal_internal=time.time()
