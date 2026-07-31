@@ -136,32 +136,48 @@ class WingLoop:
         """
         Declares the WingLoop class
         """
-        pass
-    
+        # default names for the per-timestep control exchange files, used by
+        # Performing_K_iterations_ASWING / Time_Transient_Simulation. Overridable
+        # via Launch_ASWING(input_filename=..., output_filename=...) -- this is
+        # what lets several WingLoop instances run concurrently (e.g. one per
+        # multiprocessing worker) inside the same working directory without
+        # their "input"/"output" exchange files colliding.
+        self.input_filename = "input"
+        self.output_filename = "output"
+
     def Launch_ASWING(self,aswing_fullpath,aswing_alias,sim_directory,asw_filename,print_output,
                       timer_text=0.000001,
-                      finished_writing_check_timestep=0.001):
+                      finished_writing_check_timestep=0.001,
+                      input_filename="input",
+                      output_filename="output"):
         """
-        
+
         aswing_path (str): path at the end of which there's the ASWING executable to use
         sim_directory (str): local directory where the simulation files are
         asw_filename (str): .asw filename to use
         print_output (bool): if True, WingLoop data will be printed to the terminal
         timer_text (float): timer used by default for the Aswing_Director functions
         finished_writing_check_timestep (float): timer used to check for the last update on the size of the state file written by ASWING
+        input_filename (str): name of the control-input exchange file written each timestep (default "input").
+            Override with a per-instance unique name (e.g. "input_W05") when several WingLoop instances share the
+            same working directory (e.g. multiprocessing workers), so they never read/write each other's file.
+        output_filename (str): name of the ASWING state exchange file written/read each timestep (default "output").
+            Same collision-avoidance purpose as input_filename.
         """
         # storing the variables to self.
         self.sim_directory = sim_directory
         self.print_output = print_output #used for the print output of the Aswing_Director
         self.count = 0 #used to count the number of iterations performed
-        
+        self.input_filename = input_filename
+        self.output_filename = output_filename
+
         # record the location of the initial path
         self.initial_path = os.getcwd()
         # change path to go to the sim_directory path
         #os.chdir(os.path.join(self.initial_path,sim_directory))
         # create an ASWING instance
         self.ASW_handler = Aswing_Director(aswing_path=aswing_fullpath,aswing_alias= aswing_alias,
-                                           wait_time=timer_text, 
+                                           wait_time=timer_text,
                                            finished_writing_file_check_timestep=finished_writing_check_timestep)
         self.ASW_handler.start_aswing(directory=sim_directory,filename=asw_filename,print_output=self.print_output)
 
@@ -341,14 +357,14 @@ class WingLoop:
         #deletes the previously written data from the output file, it
         # now will have a length 0
         stdout, stderr = self.ASW_handler.send_command_and_receive("W",custom_timer=custom_timer) # write the data
-        with open('output', 'w') as file:
+        with open(self.output_filename, 'w') as file:
             pass
         #checkig that the file is still there, but his content has been deleted
-        while os.stat("output").st_size:
+        while os.stat(self.output_filename).st_size:
             time.sleep(0.0000001)
         # Now that we know the content of the previous input file was
         # deleted, we can write the next one inside it
-        stdout, stderr, time_taken = self.ASW_handler.send_writefile_command_and_receive_old(filename="output",
+        stdout, stderr, time_taken = self.ASW_handler.send_writefile_command_and_receive_old(filename=self.output_filename,
                                                                                             custom_timer=custom_timer,
                                                                                             append_or_overwrite="O")
         return stdout, stderr, time_taken
@@ -405,9 +421,9 @@ class WingLoop:
             command=str(Dt_aswing)+" -"+str(K_aswing)
         else:
             command=str(Dt_aswing)+" "+str(K_aswing)
-        # we define what the command is to perform K iterations using a certain 
-        # input file called "input"
-        x_command="x input"
+        # we define what the command is to perform K iterations using a certain
+        # input file (self.input_filename, "input" by default)
+        x_command="x "+self.input_filename
 
         # allow for fixed-stick computations, with no control laws
         if self.fixed_stick:
@@ -427,14 +443,14 @@ class WingLoop:
         if state_file_write_options != "none":
             if state_file_write_options == "delete":
                 
-                # This option deletes the previous input file before writing the new one                
+                # This option deletes the previous input file before writing the new one
                 stdout, stderr = self.ASW_handler.send_command_and_receive("W",custom_timer=custom_timer) # write the data
-                os.remove("output")
+                os.remove(self.output_filename)
                 # Once the previous file is deleted, we can write the new one
-                # There's no need for the "append_or_overwrite" option, since 
-                # the previous file disappeared, so there's nothing to append 
+                # There's no need for the "append_or_overwrite" option, since
+                # the previous file disappeared, so there's nothing to append
                 # "a" or overwrite "o"
-                stdout, stderr , time_taken= self.ASW_handler.send_writefile_command_and_receive(filename="output", 
+                stdout, stderr , time_taken= self.ASW_handler.send_writefile_command_and_receive(filename=self.output_filename,
                                                                                                     custom_timer=custom_timer)
 
             if state_file_write_options == "overwrite":
@@ -452,7 +468,7 @@ class WingLoop:
                 stdout, stderr, time_taken = self._Write_Output_File(custom_timer=custom_timer)
         starttime = time.time()
         # the following line updates the perceived information
-        self.WingLoop_LogFile = read_aswing_file("output",
+        self.WingLoop_LogFile = read_aswing_file(self.output_filename,
                                                     self.WingLoop_LogFile,
                                                     self.rename_map,
                                                     RecordStateHistory=True,
@@ -478,7 +494,7 @@ class WingLoop:
             stdout, stderr = self.ASW_handler.send_command_and_receive(retry_command, custom_timer=custom_timer)
 
             self._Write_Output_File(custom_timer=custom_timer)
-            self.WingLoop_LogFile = read_aswing_file("output",
+            self.WingLoop_LogFile = read_aswing_file(self.output_filename,
                                                         self.WingLoop_LogFile,
                                                         self.rename_map,
                                                         RecordStateHistory=True,
@@ -501,7 +517,7 @@ class WingLoop:
             print("[WingLoop] step = ", self.count,"; i+1 control:",output)
 
             # create the file for the next iteration engine and flap deflections
-            python2text("input",output)
+            python2text(self.input_filename,output)
 
         #perform K time iteration on aswing, using the input text file just written
         stdout, stderr = self.ASW_handler.send_command_and_receive(x_command, custom_timer=custom_timer) #create K_aswing iteration of the unsteady simulation
@@ -523,9 +539,9 @@ class WingLoop:
         # it would work using OPER>% not OPER>T
         pass
 
-    def Time_Transient_Simulation(self,Dt,N,K,stop_if_notconverged = True):
-        
-        """ 
+    def Time_Transient_Simulation(self,Dt,N,K,stop_if_notconverged = True, stop_callback=None):
+
+        """
         Simulates the time-transient behavior of the aircraft starting from a pre-computed trimming point.
         This method performs a time-transient simulation in ASWING by iteratively solving the system dynamics.
         It begins by loading the necessary settings and importing a `.state` file containing the trimming point
@@ -550,6 +566,13 @@ class WingLoop:
                 stops as soon as such a step is detected; if False, the simulation keeps running
                 regardless, and the returned `allconverged` reflects whether any step ever failed to
                 converge (even after retry).
+            - `stop_callback`, if given, is called as `stop_callback(self)` right after every chunk of
+                iterations (the intermediate-loop chunks and the final chunk -- NOT the very first L-step
+                chunk, which never populates self.WingLoop_LogFile since no state is written/parsed for it).
+                It can inspect self.WingLoop_LogFile (e.g. the latest "Alpha" value, or the first recorded
+                "F2" value, which -- since the elevator is fixed under fixed-stick flight -- is the trimmed
+                elevator deflection) and return True to stop the simulation early, exactly like a
+                non-converged step does.
         Attributes:
             self.count (int): Tracks the number of iterations performed so far.
             self.print_output (bool): If True, prints progress information during the simulation.
@@ -571,8 +594,8 @@ class WingLoop:
         
         ### PERFORMING JUST THE FIRST ITERATION (starting from the pre-computed trimming point, saved in the .state file)
         #create a dummy, empty, output file
-        if not os.path.exists("output"):
-            open("output", "w")
+        if not os.path.exists(self.output_filename):
+            open(self.output_filename, "w")
 
         # it is possible to perform a smaller amount of initial simulations just for the very first step
         # here we set it to K (setting it to N is stupid, but possible)
@@ -605,6 +628,10 @@ class WingLoop:
                 breaksim = True
                 break
 
+            if stop_callback is not None and stop_callback(self):
+                breaksim = True
+                break
+
         if not breaksim:
             ### PERFORMING THE FINAL ROUND OF ITERATIONS (between L+k*K and N)
             if self.count<N:
@@ -613,6 +640,8 @@ class WingLoop:
                 self.Performing_K_iterations_ASWING(Dt_aswing=Dt, K_aswing=N-self.count)
                 self.count += N-self.count
                 if stop_if_notconverged and not self._Last_State_Converged():
+                    breaksim = True
+                if not breaksim and stop_callback is not None and stop_callback(self):
                     breaksim = True
             if self.print_output:
                 print("[WingLoop] Final Counter",self.count)
@@ -623,7 +652,7 @@ class WingLoop:
         allconverged = not any(not v for v in self.WingLoop_LogFile["ModelVariables"]["IsConverged"]["values"])
 
         if breaksim:
-            print("[WingLoop] Unconverged Simulation, stopping early (stop_if_notconverged=True)")
+            print("[WingLoop] Simulation stopped early (non-convergence and/or stop_callback)")
         elif not allconverged:
             print("[WingLoop] Unconverged Simulation, Good Luck")
 
@@ -692,9 +721,16 @@ class WingLoop:
         print("[WingLoop] Ending WingLoop...")
         time.sleep(0.5)
         # removing the communication files
+        # (self.input_filename is only ever created under closed-loop control --
+        # PyControl_DoControllerStep / python2text -- so under fixed_stick it
+        # never exists at all; guard both removals with an existence check so
+        # closing a fixed-stick run, or one that failed before its first
+        # output write, doesn't raise FileNotFoundError)
         if removefiles:
-            os.remove("output")
-            os.remove("input")
+            if os.path.exists(self.output_filename):
+                os.remove(self.output_filename)
+            if os.path.exists(self.input_filename):
+                os.remove(self.input_filename)
         if self.WingLoop_IsPlotting:
             self.WingLoop_Liveplot.close()
 

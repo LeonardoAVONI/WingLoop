@@ -302,8 +302,8 @@ class Aswing_Director:
         # for the following: decoupling the "is the file there" part, with the "how long is it" helps speed up slightly the time
         # also, when checking the file length, there are actually 2 terations: first the file is length 0, then final length; no in-between apparently
 
-        print("[send_wri..ve_old] Current working path:",os.getcwd())
-        print("[send_wri..ve_old] File we are currently looking for:",filename)
+        #print("[send_wri..ve_old] Current working path:",os.getcwd())
+        #print("[send_wri..ve_old] File we are currently looking for:",filename)
         while time.time() - internal_start_time < timeout:
             if os.path.exists(filename):
                 #buffer_time_internal_internal=time.time()
@@ -331,21 +331,29 @@ class Aswing_Director:
     def send_writefile_command_and_receive(self, filename, custom_timer=None, append_or_overwrite=None):
         internal_start_time = time.time()
         tt = custom_timer
-        a, b = self.send_command_and_receive(filename, custom_timer=tt)
-
-        if append_or_overwrite:
-            c, d = self.send_command_and_receive(append_or_overwrite, custom_timer=tt)
-            a, b = a + c, b + d
-
         timeout = 99999  # seconds
 
         # ── inotify path: wake up exactly when ASWING closes the file ──
+        # The watch MUST be armed before the commands below are sent: if it
+        # were armed afterwards, a fast enough write (ASWING opens, writes,
+        # and closes the file before add_watch() below has even run) fires
+        # and is gone before anything is listening for it, and the read()
+        # loop then blocks for the full `timeout` with no way to recover --
+        # this was previously the case here and caused exactly that hang
+        # under load (several concurrent ASWING instances competing for CPU
+        # made the race far more likely to actually lose).
         watch_dir  = os.path.dirname(os.path.abspath(filename))
         watch_name = os.path.basename(filename)
 
         inotify = inotify_simple.INotify()
         wd = inotify.add_watch(watch_dir, inotify_simple.flags.CLOSE_WRITE)
         try:
+            a, b = self.send_command_and_receive(filename, custom_timer=tt)
+
+            if append_or_overwrite:
+                c, d = self.send_command_and_receive(append_or_overwrite, custom_timer=tt)
+                a, b = a + c, b + d
+
             deadline = time.time() + timeout
             while time.time() < deadline:
                 ms_left = max(1, int((deadline - time.time()) * 1000))
