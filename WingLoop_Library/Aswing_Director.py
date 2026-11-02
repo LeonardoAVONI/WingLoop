@@ -157,6 +157,11 @@ class Aswing_Director:
         self.stderr_queue = Queue() #where error messages are written
         self.wait_time=wait_time
         self.finished_writing_file_check_timestep = finished_writing_file_check_timestep
+        # maximum wait [s] for a requested file in send_writefile_command_and_receive_old.
+        # A single hard time step (many Newton restarts + sub-stepping) can take 40-45 s
+        # alone and > 100 s under parallel load (seen 2026-11-02), so callers that run
+        # strong transients may raise it; a hung ASWING must then be caught by an outer timeout.
+        self.write_timeout = 100.0
 
     def enqueue(self, pipe, queue):
         """
@@ -270,7 +275,8 @@ class Aswing_Director:
                 pass
         return ''.join(standard_output), ''.join(error_output)
 
-    def send_writefile_command_and_receive_old(self, filename, custom_timer=None, append_or_overwrite = None):
+    def send_writefile_command_and_receive_old(self, filename, custom_timer=None, append_or_overwrite = None,
+                                               end_marker=None):
         """
         Function used when iterating the X commands of WingLoop
         The function asks to write the file, and waits until the file is written to continue, granting some type of 
@@ -282,9 +288,15 @@ class Aswing_Director:
             filename (str): filename we expect to be written
             custom_timer (float, optional): Used to wait after the command is sent. If None, the default wait_time is used.
             append_or_overwrite (str, optional): defines if we want to append "a" the file, or overwrite "o" it.
+            end_marker (str, optional): text the complete file ends with (e.g. "ENDEDPRINTINGSTATES"
+                for an ASWING point file). If given, a stable size is not enough: the function also
+                waits until the end of the file contains the marker. Under CPU load (parallel ASWING
+                runs) a write can pause longer than the size-check interval, and the size test alone
+                then returns a truncated file (seen 2026-11-01: spurious "not converged" steps and
+                lost/duplicated samples after WingLoop's retry).
 
         """
- 
+
         internal_start_time = time.time()
         tt=custom_timer
         a,b = self.send_command_and_receive(filename, custom_timer=tt)
@@ -296,7 +308,7 @@ class Aswing_Director:
             a = a+c
             b = b+d       
         
-        timeout=100
+        timeout = getattr(self, "write_timeout", 100.0)
         last_size = -1
         
         # for the following: decoupling the "is the file there" part, with the "how long is it" helps speed up slightly the time
@@ -317,16 +329,29 @@ class Aswing_Director:
                 current_size = os.stat(filename).st_size
                 if current_size == last_size:
                     #checking if the file has actually something written inside
-                    if current_size>0:
+                    if current_size>0 and (end_marker is None or self._ends_with(filename, end_marker)):
                         condition=0
                         break
                 last_size = current_size
             time.sleep(self.finished_writing_file_check_timestep)
             #print(check_timestep)
         if condition:
-            raise NameError("Filename takes too much time to write (ASWING)!")
+            alive = self.asw_process is not None and self.asw_process.poll() is None
+            raise NameError(f"Filename takes too much time to write (ASWING)! (waited {timeout:g} s for "
+                            f"{filename}; ASWING process {'still running' if alive else 'not running'})")
 
         return ''.join(a), ''.join(b), time.time()-internal_start_time
+
+    @staticmethod
+    def _ends_with(filename, marker, tail_bytes=256):
+        """True if the last tail_bytes of the file contain marker."""
+        try:
+            with open(filename, "rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                fh.seek(max(0, fh.tell() - tail_bytes))
+                return marker.encode() in fh.read()
+        except OSError:
+            return False
 
     def send_writefile_command_and_receive(self, filename, custom_timer=None, append_or_overwrite=None):
         internal_start_time = time.time()

@@ -276,6 +276,7 @@ def read_aswing_file(filepath, data_dict, rename_map=None,
     reading_size = False
     states = []
     converged = False
+    seen_vars = set()   # one value per variable and point file (see step 4)
 
     for line in lines:
         stripped = line.strip()
@@ -351,7 +352,14 @@ def read_aswing_file(filepath, data_dict, rename_map=None,
 
                 internal_name = rename_map.get(var_name, var_name)
 
+                # keep the first match only: when several engine pylons are
+                # driven by the same engine variable, each pylon block prints
+                # "Peng k", which would append k's value once per pylon
+                if internal_name in seen_vars:
+                    continue
+
                 if internal_name in data_dict["ModelVariables"]:
+                    seen_vars.add(internal_name)
                     data_dict["ModelVariables"][internal_name]["values"].append(value)
                     if (data_dict["ModelVariables"][internal_name]["unit"] is None and
                             unit_candidate is not None):

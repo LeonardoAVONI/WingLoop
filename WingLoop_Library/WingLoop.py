@@ -364,9 +364,12 @@ class WingLoop:
             time.sleep(0.0000001)
         # Now that we know the content of the previous input file was
         # deleted, we can write the next one inside it
+        # a complete point file ends with the state block (ENDEDPRINTINGSTATES):
+        # wait for it, a stable file size alone can return a truncated file under load
         stdout, stderr, time_taken = self.ASW_handler.send_writefile_command_and_receive_old(filename=self.output_filename,
                                                                                             custom_timer=custom_timer,
-                                                                                            append_or_overwrite="O")
+                                                                                            append_or_overwrite="O",
+                                                                                            end_marker="ENDEDPRINTINGSTATES")
         return stdout, stderr, time_taken
 
     def _Pop_Last_Recorded_State(self):
