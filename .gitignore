@@ -59,6 +59,7 @@ Thumbs.db
 # ---------------------------
 **/wingloop_v2_handshake.json*
 **/*_wlv2.slx
+**/*_wlv2.slxc
 **/results_v3/
 **/input_schedule
 .pytest_cache/

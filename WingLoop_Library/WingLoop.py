@@ -75,7 +75,7 @@ import warnings
 
 import numpy as np
 
-from .Aswing_Director import Aswing_Director, ASWINGHangError, ASWINGCrashError, MARCH_QUESTION_RE
+from .Aswing_Director import Aswing_Director, ASWINGHangError, ASWINGCrashError, MARCH_QUESTION_RE, TABLE_PROMPT_RE
 from .PyControl import PyControl
 from .PyControl_IO import (initialize_data_dict, _build_pattern, parse_point_file, python2text,
                            python2text_schedule, export_data_dict, model_states_array, _store_state)
@@ -187,8 +187,8 @@ class WingLoop:
         self.update_aswing_atmosphere = False
         self.initial_altitude_km = None
         self.atmosphere_gravity = 9.80665
-        # alpha_ref / beta_ref: PARAM index -> channel (ASWING_Modified, INDEXP.INC KPAREF/KPBREF)
-        self.param_channels = {"alpha_ref": 70, "beta_ref": 71}
+        # beta_ref / alpha_ref: PARAM index -> channel (ASWING_Modified, INDEXP.INC KPBREF = 70, KPAREF = 71)
+        self.param_channels = {"beta_ref": 70, "alpha_ref": 71}
         self.sim_status = "not run"
         self.metadata = {}
         self.count = 0
@@ -325,6 +325,8 @@ class WingLoop:
         for ch in WINGLOOP_CHANNELS:
             self.WingLoop_LogFile["ModelVariables"][ch] = {"values": [], "unit": None, "latex": None}
         self.WingLoop_LogFile["ModelVariables"]["Time_ASWING"]["unit"] = "s"
+        for ch in ("alpha_ref", "beta_ref"):         # from the state block: radians
+            self.WingLoop_LogFile["ModelVariables"][ch]["unit"] = "rad"
         self._recording_N = N_steps
 
     def InitializePlot(self, liveplot, plot_variables, plot_sim_time, plot_refreshtime,
@@ -398,6 +400,25 @@ class WingLoop:
         self.metadata["aero_flags"] = flags
         return flags
 
+    def Set_Constraint_Table(self, keys):
+        """
+        OPER menu: open the operating-point constraint table ("%"), send `keys` one by one
+        and leave it ("d"). Examples (ptable.f):
+            "f"        free-flight defaults (accelerations from zero force / moment)
+            "c"        pin flaps and engines to their current values, unsteady mode
+            "l"        toggle the ASWING control law (.con, loaded with CGET) / fixed stick;
+                       ASWING starts with fixed stick
+            "9 3"      toggle: variable (column) 9 set by constraint (row) 3
+        Fixed stick is what WingLoop needs (WingLoop is the pilot); the control law is for
+        comparisons with ASWING's own controller.
+        """
+        h = self.ASW_handler
+        h.send_command_and_receive("%", expect=TABLE_PROMPT_RE)
+        for k in keys:
+            h.send_command_and_receive(str(k), expect=TABLE_PROMPT_RE)
+        h.send_command_and_receive("d")
+        self.metadata.setdefault("constraint_keys", []).extend(str(k) for k in keys)
+
     # ================================================================== time march
     def _read_point(self):
         t0 = time.time()
@@ -456,11 +477,13 @@ class WingLoop:
         ch["IsConverged"] = bool(p["converged"])
         return ch
 
-    def _enter_unsteady_oper(self, aero_flags):
+    def _enter_unsteady_oper(self, aero_flags, constraint_keys=None):
         cmd = self.ASW_handler.send_command_and_receive
         out, _ = cmd("oper")
         if aero_flags:
             self.Set_Aero_Flags(**aero_flags)
+        if constraint_keys:
+            self.Set_Constraint_Table(constraint_keys)
         out, _ = cmd(".")
         if self.ASW_handler.sync == "prompt" and ".OPERs" in out[-200:]:
             out, _ = cmd(".")            # it was already unsteady: toggle back
@@ -500,7 +523,7 @@ class WingLoop:
 
     def Time_Transient_Simulation(self, Dt, N, K=1, stop_if_notconverged=True, stop_callback=None,
                                   stop_condition=None, retry_substeps=0, record_initial=False,
-                                  aero_flags=None):
+                                  aero_flags=None, constraint_keys=None):
         """
         March N time steps of Dt from the loaded (trimmed) state, controller called every K steps.
 
@@ -515,6 +538,8 @@ class WingLoop:
             (same control input); "Retried" records the outcome.
         record_initial : also record the initial point at t = 0.
         aero_flags : dict for Set_Aero_Flags (e.g. {"freeze_vl": True, "lag": False}), set in OPER.
+        constraint_keys : keys for Set_Constraint_Table, sent in OPER before the march, e.g.
+            ["f", "c", "l"] for a free-flying aircraft flown by ASWING's control law (.con).
 
         Open-loop controllers (Python): a UserController with schedule(times) -> {name: array}
         gets its commands written once to a time-history control file (one row per step, applied
@@ -559,7 +584,7 @@ class WingLoop:
         step_ok, stopped = True, False
         self.count = 0
         try:
-            self._enter_unsteady_oper(aero_flags)
+            self._enter_unsteady_oper(aero_flags, constraint_keys)
             p = self._read_point()                                     # initial point, t = 0
             if record_initial:
                 self._commit(p, 0.0)

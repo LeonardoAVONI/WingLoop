@@ -42,14 +42,24 @@ Tests:
 python -m pytest                                   # repo root; no ASWING needed (tests/fake_aswing.py)
 python -m pytest tests/test_wingloop.py -k retry   # one test
 cd WingLoop_Library/wingloop_testrun
-python wingloop_testrun.py py                      # one real run (py|mat|sim|fmu|fmu_rebuild|simv2|fixed|native)
-python run_all_backends.py                         # all backends + cross-check report (results_v3/report.md)
+python wingloop_testrun.py py --build stable       # one real run (py|mat|sim|fmu|fmu_rebuild|simv2|fixed|native)
+python run_all_backends.py                         # all backends, both builds (results_v3/<build>/report.md)
+python make_trim.py modified                       # re-trim an aircraft version (after an ASWING rebuild)
 ```
 
 `run_all_backends.py` is the regression check for anything touching the loop, the I/O or a backend: every
 backend implements the same PID, so Python, MATLAB, Simulink V1, FMU and Simulink V2 must agree to round-off
-(currently bit-identical) and the report flags a one-step lag. It needs ASWING (alias `aswing_stable`) and
-MATLAB/Simulink with Simulink Coder (FMU export).
+(currently bit-identical) and the report flags a one-step lag. It needs ASWING (aliases `aswing_stable`,
+`aswing_modified`; ASWING_Modified also `ASWING_DB_DIR`) and MATLAB/Simulink with Simulink Coder (FMU export).
+
+Two aircraft versions, one per ASWING build: `aswing_geometry_stable/` and `aswing_geometry_modified/` (same
+`.asw`/`.gust`/`.con`; `.pnt`/`.set`/`.state` are build-specific: KPTOT 119 vs 120, "Dimensions have changed").
+`make_trim.py` regenerates them (`% f 9 3 17 1 20 5 23 32 24 6 d x`, then `r % f c . d x`, PSAV/SSAV/HSAV —
+not TSAV, which crashes with one point) and writes `trim_reference.json`, which the test `UserController`s
+read through `precomputed_filename`. The FMU bakes in one build's references: `fmu_rebuild` before `fmu`.
+ASWING's own control law (`.con`) is active only after `%`, `l` in OPER (default fixed stick, which is what
+WingLoop needs); the `native` backend uses `constraint_keys=["f", "c", "l"]`. The constraint-table prompt has
+no newline: `TABLE_PROMPT_RE`.
 
 Do not build ASWING yourself (its own repos say so); running it is fine.
 
@@ -78,7 +88,7 @@ controlled too and the record holds t = K·Dt … N·Dt (plus t = 0 with `record
   dict, decide (retry), then `_commit` — never append and pop (the V2 bug class: lost/duplicated samples).
   Channels added per step: `IsConverged`, `NewtonRestarts`/`TSplits` (counted in the march output), `Retried`,
   `Time_ASWING` (`Time` is k·Dt in float64), `cmd_<name>` (everything the controller returned, including
-  non-ASWING flags, which are not sent to ASWING), `alpha_ref`/`beta_ref` (from the state block, only when
+  non-ASWING flags, which are not sent to ASWING), `beta_ref`/`alpha_ref` [rad] (PARAM 70/71 from the state block, only when
   `KPTOT >= 120`, i.e. ASWING_Modified: index 18·IITOT + 12·NJOIN + NNTOT + kp − 1). Open-loop controllers
   (`schedule(times)`, optional `takeover(channels)`) write one time-history file; ASWING evaluates traces at
   the absolute end time of each step, so one row (t_{k+1}, u_k) per step is exact. `max_time_points = 9997`
@@ -104,7 +114,6 @@ controlled too and the record holds t = K·Dt … N·Dt (plus t = 0 with `record
 - **`PyControl_Plot.py`** — live/post-run plotting; imported only by `InitializePlot` with plot variables.
 - **`ASW_Helpers.py`** — videos / strobe images / timeseries plots (merged V2 + M. A. Incarbone's video
   options). Loaded lazily through `WingLoop_Library.__getattr__`.
-- **`PyControl_additional.py`** — legacy, not on the call path.
 
 ### Rules for a Simulink controller (V1, FMU and V2 alike)
 

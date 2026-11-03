@@ -55,6 +55,9 @@ class UserController:
         If precomputed_file_path points to an existing .npz file the workspace
         attributes are loaded from it via _load_precomputed().  Otherwise
         _compute_from_startup() is called to produce default values.
+        A .json file (trim_reference.json of aswing_geometry_<build>/) sets the
+        trim references F2ref, E2ref, Pitchref of the aircraft version used;
+        without it the references of the ASWING_Stable test aircraft are used.
         simulationtime is always reset to 0.0 regardless of the source.
 
         Parameters
@@ -68,7 +71,18 @@ class UserController:
         self.workspace_string_py = None
         self.workspace_matrix_py = None
 
-        if precomputed_file_path and os.path.isfile(precomputed_file_path):
+        # trim references (ASWING_Stable test aircraft); a trim_reference.json overrides them
+        self.F2ref, self.E2ref, self.Pitchref = -4.638, 2.7460, 0.081889689
+        if precomputed_file_path and str(precomputed_file_path).endswith(".json") \
+                and os.path.isfile(precomputed_file_path):
+            import json
+            with open(precomputed_file_path) as f:
+                ref = json.load(f)
+            self.F2ref, self.E2ref, self.Pitchref = ref["F2ref"], ref["E2ref"], ref["Pitchref"]
+            print(f"[UserController] trim references from {precomputed_file_path}: "
+                  f"F2ref={self.F2ref}, E2ref={self.E2ref}, Pitchref={self.Pitchref}")
+            self._compute_from_startup(keep_references=True)
+        elif precomputed_file_path and os.path.isfile(precomputed_file_path):
             self._load_precomputed(precomputed_file_path)
         else:
             self._compute_from_startup()
@@ -106,7 +120,7 @@ class UserController:
         self.workspace_matrix_py = data.get('workspace_matrix_py', np.zeros((1, 1)))
 
     # ------------------------------------------------------------------
-    def _compute_from_startup(self):
+    def _compute_from_startup(self, keep_references=False):
         """
         Compute default workspace attributes.
 
@@ -119,9 +133,10 @@ class UserController:
         self.workspace_string_py = "test_matlab_workspace"
         self.workspace_matrix_py = self.workspace_scalar_py * np.eye(5)
 
-        self.F2ref = -4.638
-        self.E2ref = 2.7460
-        self.Pitchref = 0.081889689
+        if not keep_references:
+            self.F2ref = -4.638
+            self.E2ref = 2.7460
+            self.Pitchref = 0.081889689
     # ------------------------------------------------------------------
     def step(self, instantaneous_state, Dt):
         """

@@ -1,0 +1,6 @@
+ 5	! 1-cosine vertical gust
+-15	! horizontal distance over x until beginning of gust
+ 0 	! coefficient for y slope
+ 15	! Horizontal gust length H
+ 3	! Wmax
+ 0

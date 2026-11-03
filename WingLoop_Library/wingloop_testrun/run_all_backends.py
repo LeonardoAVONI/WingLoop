@@ -7,8 +7,13 @@
 """
 Run the test case with every controller backend and check they give the same result.
 
-    python run_all_backends.py [--backends py,mat,sim,fmu_rebuild,fmu,simv2,native,fixed]
+    python run_all_backends.py [--build stable|modified|all] [--backends fixed,py,mat,sim,fmu_rebuild,fmu,simv2,native]
                                [--aswing PATH] [--N 300] [--out results_v3]
+
+--build all (default) runs every backend on both aircraft versions (ASWING_Stable and
+ASWING_Modified), each in results_v3/<build>/, with one report per build. The FMU is
+re-exported for each build (fmu_rebuild, which bakes that build's trim references and
+state length into it) before the "fmu" run uses it.
 
 Every backend implements the same PID, so with the same inputs every backend must
 command the same F2 and produce the same ASWING states. Each run is done in its own
@@ -68,20 +73,35 @@ def compare(ref, run, shift=0):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--backends", default="fixed,py,mat,sim,fmu_rebuild,fmu,simv2")
-    ap.add_argument("--aswing", default=None, help="ASWING executable or folder (default: alias aswing_stable)")
-    ap.add_argument("--alias", default="aswing_stable")
+    ap.add_argument("--backends", default="fixed,py,mat,sim,fmu_rebuild,fmu,simv2,native")
+    ap.add_argument("--build", default="all", choices=["stable", "modified", "all"])
+    ap.add_argument("--aswing", default=None, help="ASWING executable or folder (only with one --build)")
     ap.add_argument("--N", type=int, default=300)
     ap.add_argument("--Dt", type=float, default=0.01)
     ap.add_argument("--out", default=os.path.join(HERE, "results_v3"))
     ap.add_argument("--reuse", action="store_true", help="only compare existing results")
     a = ap.parse_args()
     backends = [b.strip() for b in a.backends.split(",") if b.strip()]
-    os.makedirs(a.out, exist_ok=True)
+    # stable last: the .fmu left in simulink_controller/ is then the stable build's (the default)
+    builds = ["modified", "stable"] if a.build == "all" else [a.build]
+    if a.aswing and len(builds) > 1:
+        ap.error("--aswing needs a single --build")
+    failed = False
+    root = a.out
+    for build in builds:
+        a.out = os.path.join(root, build)
+        failed |= run_build(a, build, backends)
+    return 1 if failed else 0
 
-    if a.aswing is None:
-        from WingLoop_Library.Aswing_Director import resolve_aswing_executable
-        a.aswing = resolve_aswing_executable(aswing_alias=a.alias)      # once, here
+
+ALIASES = {"stable": "aswing_stable", "modified": "aswing_modified"}
+
+
+def run_build(a, build, backends):
+    os.makedirs(a.out, exist_ok=True)
+    from WingLoop_Library.Aswing_Director import resolve_aswing_executable
+    exe = a.aswing or resolve_aswing_executable(aswing_alias=ALIASES[build])      # once, here
+    geometry = os.path.join(HERE, f"aswing_geometry_{build}")
 
     timings = {}
     for b in backends:
@@ -92,11 +112,11 @@ def main():
                 shutil.rmtree(case)
             if os.path.exists(tj):
                 os.remove(tj)            # never report a previous run's result
-            shutil.copytree(os.path.join(HERE, "aswing_geometry"), case,
-                            ignore=shutil.ignore_patterns("input", "output", "*.json*", "*.npz", "*.pdf",
+            shutil.copytree(geometry, case,
+                            ignore=shutil.ignore_patterns("input", "output", "result*", "*.npz", "*.pdf",
                                                           "*.ps", "*.gif", "*.mp4", "*.webm", "video*"))
-            print(f"\n===== {b} =====", flush=True)
-            cmd = [sys.executable, os.path.join(HERE, "wingloop_testrun.py"), b, "--aswing", a.aswing,
+            print(f"\n===== {build}: {b} =====", flush=True)
+            cmd = [sys.executable, os.path.join(HERE, "wingloop_testrun.py"), b, "--build", build, "--aswing", exe,
                    "--N", str(a.N), "--Dt", str(a.Dt), "--sim-directory", case, "--out", "result",
                    "--timings-json", tj]
             with open(os.path.join(a.out, f"{b}.log"), "w") as log:
@@ -135,8 +155,9 @@ def main():
         rows.append(row)
 
     base = timings.get("fixed", {}).get("ms_per_step")
-    lines = ["# WingLoop 3.0 backend cross-check", "",
-             f"Test aircraft, 1-cosine gust, N = {a.N}, Dt = {a.Dt} s, K = 1, ASWING `{a.aswing}`.",
+    lines = [f"# WingLoop 3.0 backend cross-check: {build} aircraft", "",
+             f"Test aircraft (aswing_geometry_{build}), 1-cosine gust, N = {a.N}, Dt = {a.Dt} s, K = 1, "
+             f"ASWING `{exe}`.",
              "Differences against the Python run. Timings: one run each, this machine.", "",
              "| backend | verdict | max dF2 [deg] | max dstate / range | shifted by 1 step | ms/step | "
              "vs fixed stick | overhead [s] | status |",

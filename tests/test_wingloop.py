@@ -234,6 +234,14 @@ def test_aero_flags(case, monkeypatch):
     assert ok and WL.metadata["aero_flags"] == {"freeze_vl": True, "lag": False}
 
 
+def test_constraint_table(case, monkeypatch):
+    """Keys reach ASWING's constraint table; "c" (unsteady) does not leave the march steady."""
+    ok, WL, V, S = run(case, N=3, constraint_keys=["f", "c", "l"], monkeypatch=monkeypatch)
+    assert ok and WL.sim_status == "completed"
+    assert open(case / "table_keys.log").read().split() == ["f", "c", "l"]
+    assert WL.metadata["constraint_keys"] == ["f", "c", "l"]
+
+
 def test_metadata_and_output(case, monkeypatch):
     ok, WL, V, S = run(case, N=3, monkeypatch=monkeypatch)
     WL.WingLoop_LogFile["ModelStates"] = S

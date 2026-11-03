@@ -1,0 +1,12 @@
+{
+  "build": "stable",
+  "note": "trim of the original V2 test files (make_trim.py stable reproduces it: alpha = theta = 4.69194 deg, F2 = -4.638, E1 = E2 = 2.746)",
+  "V": 30.0,
+  "alpha_deg": 4.691941261291504,
+  "F2ref": -4.638,
+  "E2ref": 2.746,
+  "E1": 2.746,
+  "E2": 2.746,
+  "Pitchref": 0.081889689,
+  "theta_deg": 4.691939353942871
+}

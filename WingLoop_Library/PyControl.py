@@ -476,7 +476,6 @@ class PyControl:
                 
                 actual_solver = self.eng.get_param(self.control_model_name, 'Solver', nargout=1)
                 if actual_solver not in ('FixedStepDiscrete',):
-                    import warnings
                     warnings.warn(
                         f"[PyControl] SLX solver is '{actual_solver}'. "
                         f"FMU export requires a fixed-step solver. "

@@ -95,10 +95,23 @@ classdef UserController < handle
 
             fprintf('[MATLAB UserController] path? %s', precomputed_file_path);
 
-            if ~isempty(precomputed_file_path) && isfile(precomputed_file_path)
+            if ~isempty(precomputed_file_path) && isfile(precomputed_file_path) ...
+                    && endsWith(precomputed_file_path, '.json')
+                % trim_reference.json of aswing_geometry_<build>/: trim of the aircraft version used
+                obj.computeInitialData();
+                ref = jsondecode(fileread(precomputed_file_path));
+                obj.F2ref = ref.F2ref;  obj.E2ref = ref.E2ref;  obj.Pitchref = ref.Pitchref;
+                fprintf('[MATLAB UserController] trim references from %s: F2ref=%g E2ref=%g Pitchref=%.9g\n', ...
+                    precomputed_file_path, obj.F2ref, obj.E2ref, obj.Pitchref);
+            elseif ~isempty(precomputed_file_path) && isfile(precomputed_file_path)
                 obj.loadFromPrecomputed(precomputed_file_path);
             else
                 obj.computeInitialData();
+            end
+            if isempty(obj.F2ref)        % .mat precomputed file: no references in it
+                obj.F2ref    = -4.638;
+                obj.E2ref    =  2.7460;
+                obj.Pitchref =  0.081889689;   % [rad]
             end
 
             obj.simulationtime = 0.0;

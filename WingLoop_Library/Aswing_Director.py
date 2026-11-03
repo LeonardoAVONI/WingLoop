@@ -70,13 +70,15 @@ import subprocess
 from collections import deque
 from queue import Empty
 
-__all__ = ["Aswing_Director", "ASWINGHangError", "ASWINGCrashError", "PROMPT_RE",
+__all__ = ["Aswing_Director", "ASWINGHangError", "ASWINGCrashError", "PROMPT_RE", "TABLE_PROMPT_RE",
            "resolve_aswing_executable"]
 
 # end of an ASKC/ASKS/ASKI/ASKR/ASKL prompt (ask1.f: FORMAT(/A,'   c>  ',$) etc.)
 PROMPT_RE = re.compile(r"(?:\s[cisr]|\sy/n)>  $")
 # plain-line question of the unsteady X command (oper.f, FORMAT 2052)
 MARCH_QUESTION_RE = re.compile(r"append steps\)[^\n]*\n\s*$")
+# prompt of the OPER constraint table ("%", ptable.f), printed without newline
+TABLE_PROMPT_RE = re.compile(r"\( ABCDFLPQSX\.\+- \): $")
 # a question ASWING asks before overwriting an existing file
 OVERWRITE_QUESTION_RE = re.compile(r"(exists\.[^\n]*(Overwrite|Append)[^\n]*\n\s*$)|(Overwrite\?\s*Y\s*\n\s*$)")
 

@@ -143,6 +143,8 @@ class Fake:
                 prompt(".OPERu (initial point:   1)" if self.unsteady else ".OPERs (target point:  1)")
             elif c == "K":
                 self.menu_k()
+            elif c == "%":
+                self.menu_table()
             elif c == "X" and self.unsteady:
                 pending_march = arg.strip()
                 say("\n Enter delta(t), Nstep  (-Nstep to append steps)  0.10000      10\n")
@@ -155,6 +157,22 @@ class Fake:
                 prompt(".OPERu (initial point: %3d)" % self.current()["level"])
             else:
                 prompt(".OPERu (initial point: %3d)" % self.current()["level"])
+
+    def menu_table(self):
+        """Constraint table: records the keys (written to table_keys.log), "d" or blank leaves it."""
+        def ask():
+            say(" Type indices of (col,row) to toggle, or ( ABCDFLPQSX.+- ): ")
+        ask()
+        for raw in sys.stdin:
+            k = raw.strip()
+            if k.upper() in ("D", ""):
+                prompt(".OPERu (initial point:   1)" if self.unsteady else ".OPERs (target point:  1)")
+                return
+            with open("table_keys.log", "a") as f:
+                f.write(k + "\n")
+            if k.upper() == "C":
+                self.unsteady = True          # ptable.f: "c" sets STEADY = F
+            ask()
 
     def menu_k(self):
         def show():
