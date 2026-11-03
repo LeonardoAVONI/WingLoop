@@ -17,11 +17,11 @@ These are the WingLoop changes I'd make, most useful first, based on what this p
      accept a short lag in the recovery check.
   3. Parse less, and delete point files once read. Read only the header channels needed plus the state
      block, compile the regexes once, and delete each file after parsing (the raw driver does this).
-     Large point-file directories slow everything down.
+     Large point-file directories slow everything down. NOT_THIS
   4. Store output in a compact format. Today a 100 s run makes a .json.gz of about 160 MB, while the .npz
      holding the same information is about 1 MB. Write numeric arrays to .npz/HDF5, with the state
-     history as one float32 array. Optionally keep only selected parts of ModelStates (the joint block,
-     the PARAM "additional variables"), set by an option.
+     history as one float32 array. {Optionally keep only selected parts of ModelStates (the joint block,
+     the PARAM "additional variables"), set by an option.NOT_THIS}
   5. Limit threads per worker. Set OMP_NUM_THREADS=1 / OPENBLAS_NUM_THREADS=1 in the worker environment
      so numpy doesn't oversubscribe the machine.
 
@@ -71,13 +71,10 @@ These are the WingLoop changes I'd make, most useful first, based on what this p
   21. Packaging. Make it installable in any env with pip install -e, with declared dependencies. It
       currently imports only in Matlab on the 7550.
 
-  Not WingLoop, but the next big lever
+{NOT_THIS  Not WingLoop, but the next big lever
 
   The largest remaining cost is on the ASWING side. A lighter per-step output command (header channels,
   joint block and PARAM extras only, or a binary dump) could cut much of ASWING's per-step write time.
-  That would need a change in ASWING_Modified.
+  That would need a change in ASWING_Modified.}
 
-  For checking the edits: py_30_raw_check.py compares WingLoop with the raw driver channel by channel,
-  and they were bit-identical before. Run it again after the changes, then run py_23_reference_check.py
-  for the two reference runs.
 

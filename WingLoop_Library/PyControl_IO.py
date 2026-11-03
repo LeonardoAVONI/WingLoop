@@ -256,133 +256,151 @@ def _build_pattern(data_dict, rename_map):
 
 
 
+class IncompletePointFile(RuntimeError):
+    """A point file does not end with ENDEDPRINTINGSTATES (truncated or still being written)."""
+
+
+def parse_point_file(filepath, compiled_pattern, rename_map=None, wanted=None, require_complete=True):
+    """
+    Parse one ASWING point file (OPER "W") without modifying any data dictionary.
+
+    Parameters
+    ----------
+    filepath : str
+    compiled_pattern : re.Pattern
+        From _build_pattern(data_dict, rename_map).
+    rename_map : dict | None
+        Raw ASWING name -> internal name.
+    wanted : container | None
+        Internal names to keep (None = all matches).
+    require_complete : bool
+        Raise IncompletePointFile if the file does not contain ENDEDPRINTINGSTATES
+        (a truncated read caused false "not converged" steps under parallel load).
+
+    Returns
+    -------
+    dict with keys
+        "name"      : model name (3rd line)
+        "converged" : bool ("Status: Converged")
+        "values"    : {internal_name: float}, first match per variable (a variable printed
+                      once per engine pylon, "Peng k", is kept once)
+        "units"     : {internal_name: unit or None}
+        "states"    : 1-D float64 array of the STARTED/ENDEDPRINTINGSTATES block (or None)
+        "params"    : {"IITOT": .., "NJOIN": .., ...} from "STATEFILE SIZE:"
+    """
+    if rename_map is None:
+        rename_map = {}
+    with open(filepath, "r") as f:
+        text = f.read()
+    if require_complete and "ENDEDPRINTINGSTATES" not in text[-512:]:
+        raise IncompletePointFile(f"{filepath}: no ENDEDPRINTINGSTATES at the end of the file")
+    head, found, rest = text.partition("STARTEDPRINTINGSTATES")
+    lines = head.split("\n", 4)
+    out = {"name": lines[2].strip() if len(lines) > 2 else None, "converged": False,
+           "values": {}, "units": {}, "states": None, "params": {}}
+    m = _STATUS_RE.search(head)
+    if m:
+        out["converged"] = "Converged" in m.group(1)
+    size_at = head.find("STATEFILE SIZE:")
+    if size_at >= 0:
+        for k, v in _SIZE_RE.findall(head[size_at + 15:]):
+            out["params"][k] = int(float(v))
+        head = head[:size_at]
+    tables = _TABLE_RE.search(head)          # spanwise beam tables: no global variables there
+    if tables:
+        head = head[:tables.start()]
+    vals, units = out["values"], out["units"]
+    for match in compiled_pattern.finditer(head):
+        raw = match.group(1).strip()
+        internal = rename_map.get(raw, raw)
+        if internal in vals or (wanted is not None and internal not in wanted):
+            continue
+        vals[internal] = float(match.group(2))
+        units[internal] = match.group(3)
+    if found:
+        block = rest.partition("ENDEDPRINTINGSTATES")[0]
+        # numeric lines only (section headers such as "Joints:" are skipped, as in V2)
+        num = [ln for ln in block.split("\n") if ln.strip() and _NUMLINE_RE.match(ln)]
+        try:
+            out["states"] = np.array(" ".join(num).split(), dtype=np.float64)
+        except ValueError:                  # a mixed line: fall back to the V2 rule, line by line
+            states = []
+            for ln in num:
+                try:
+                    states.extend(float(x) for x in ln.split())
+                except ValueError:
+                    pass
+            out["states"] = np.array(states, dtype=np.float64)
+    return out
+
+
+_STATUS_RE = re.compile(r"Status:\s*([^\n]*)")
+_SIZE_RE = re.compile(r"^\s*([A-Za-z]\w*)\s*:\s*([-+0-9.Ee]+)\s*$", re.M)
+_NUMLINE_RE = re.compile(r"^\s*[-+.0-9]")
+_TABLE_RE = re.compile(r"^\s*(?:Surface|Fuselage)\s+Beam\s+\d+:", re.M)
+
+
 def read_aswing_file(filepath, data_dict, rename_map=None,
                      RecordStateHistory=False, compiled_pattern=None):
+    """
+    Parse an ASWING point file and append its values to `data_dict` (V2 interface).
 
+    One value per requested variable and file (first match: the Peng fix), "IsConverged"
+    from the Status line, the state block appended to ModelStates (RecordStateHistory=True,
+    preallocated if data_dict["_N_steps"] is set) or stored as the last state.
+    """
     if rename_map is None:
         rename_map = {}
     pattern = compiled_pattern if compiled_pattern is not None else _build_pattern(data_dict, rename_map)
-
-    # Initialize ModelParameters if not already present
-    if "ModelParameters" not in data_dict:
-        data_dict["ModelParameters"] = {}
-
-    with open(filepath, "r") as f:
-        lines = f.readlines()
-
-    data_dict["ModelName"] = lines[2].strip()
-
-    recording_states = False
-    reading_size = False
-    states = []
-    converged = False
-    seen_vars = set()   # one value per variable and point file (see step 4)
-
-    for line in lines:
-        stripped = line.strip()
-
-        # 1. Handle Status
-        if "Status:" in stripped:
-            converged = "Converged" in stripped
-
-        # 2. Extract Model Parameters from STATEFILE SIZE
-        if "STATEFILE SIZE:" in stripped:
-            reading_size = True
-            continue
-        
-        if reading_size:
-            if "STARTEDPRINTINGSTATES" in stripped:
-                reading_size = False
-                # Fall through to the STARTEDPRINTINGSTATES block below
-            elif ":" in stripped:
-                try:
-                    parts = stripped.split(":")
-                    param_name = parts[0].strip()
-                    # Convert to float then int to handle any scientific notation
-                    param_value = int(float(parts[1].strip()))
-                    data_dict["ModelParameters"][param_name] = param_value
-                except (ValueError, IndexError):
-                    pass
-                continue
-
-        # 3. Handle State Vector Recording[cite: 1]
-        if "STARTEDPRINTINGSTATES" in stripped:
-            recording_states = True
-            reading_size = False 
-            states = []
-            continue
-
-        if "ENDEDPRINTINGSTATES" in stripped:
-            recording_states = False
-            state_array = np.array(states, dtype=np.float64)
-            if RecordStateHistory:
-                N   = data_dict.get("_N_steps")
-                idx = data_dict.get("_state_count", 0)
-
-                if N is not None:
-                    if idx == 0:
-                        data_dict["ModelStates"] = np.empty((N, len(state_array)), dtype=np.float64)
-                    data_dict["ModelStates"][idx] = state_array
-                    data_dict["_state_count"] = idx + 1
-                else:
-                    if not isinstance(data_dict.get("ModelStates"), list):
-                        data_dict["ModelStates"] = []
-                    data_dict["ModelStates"].append(state_array)
-            else:
-                data_dict["ModelStates"] = state_array
-            continue
-
-        if recording_states:
-            # Simple skip: if the line contains text (headers), float() will fail[cite: 1]
-            try:
-                line_values = [float(x) for x in stripped.split()]
-                if line_values:
-                    states.extend(line_values)
-            except ValueError:
-                # Skips "Distributed Variables", "Joints:", "Circulation:", etc.[cite: 1]
-                pass
-            continue
-
-        # 4. Extract standard variables (skip if we are in special sections)
-        if not reading_size and not recording_states:
-            for match in pattern.finditer(line):
-                var_name = match.group(1).strip()
-                value = float(match.group(2))
-                unit_candidate = match.group(3)
-
-                internal_name = rename_map.get(var_name, var_name)
-
-                # keep the first match only: when several engine pylons are
-                # driven by the same engine variable, each pylon block prints
-                # "Peng k", which would append k's value once per pylon
-                if internal_name in seen_vars:
-                    continue
-
-                if internal_name in data_dict["ModelVariables"]:
-                    seen_vars.add(internal_name)
-                    data_dict["ModelVariables"][internal_name]["values"].append(value)
-                    if (data_dict["ModelVariables"][internal_name]["unit"] is None and
-                            unit_candidate is not None):
-                        data_dict["ModelVariables"][internal_name]["unit"] = unit_candidate
-
+    data_dict.setdefault("ModelParameters", {})
+    p = parse_point_file(filepath, pattern, rename_map, wanted=data_dict["ModelVariables"],
+                         require_complete=False)
+    data_dict["ModelName"] = p["name"]
+    data_dict["ModelParameters"].update(p["params"])
+    for name, value in p["values"].items():
+        var = data_dict["ModelVariables"][name]
+        var["values"].append(value)
+        if var["unit"] is None and p["units"].get(name) is not None:
+            var["unit"] = p["units"][name]
+    if p["states"] is not None:
+        _store_state(data_dict, p["states"], RecordStateHistory)
     if "IsConverged" in data_dict["ModelVariables"]:
-        data_dict["ModelVariables"]["IsConverged"]["values"].append(converged)
-
+        data_dict["ModelVariables"]["IsConverged"]["values"].append(p["converged"])
     return data_dict
 
 
+def _store_state(data_dict, state_array, record_history=True):
+    """Append one state vector to data_dict["ModelStates"] (preallocated when _N_steps is set)."""
+    if not record_history:
+        data_dict["ModelStates"] = state_array
+        return
+    N = data_dict.get("_N_steps")
+    idx = data_dict.get("_state_count", 0)
+    if N is not None and (idx == 0 or (isinstance(data_dict.get("ModelStates"), np.ndarray)
+                                       and data_dict["ModelStates"].ndim == 2)):
+        if idx == 0:
+            data_dict["ModelStates"] = np.empty((N, len(state_array)), dtype=np.float64)
+        if idx >= data_dict["ModelStates"].shape[0]:            # grow if N was too small
+            extra = np.empty_like(data_dict["ModelStates"])
+            data_dict["ModelStates"] = np.vstack([data_dict["ModelStates"], extra])
+        data_dict["ModelStates"][idx] = state_array
+    else:
+        if not isinstance(data_dict.get("ModelStates"), list):
+            data_dict["ModelStates"] = []
+        data_dict["ModelStates"].append(state_array)
+    data_dict["_state_count"] = idx + 1
 
 
-
-
-
-
-
-
-
-
-
-
+def model_states_array(data_dict):
+    """ModelStates as one 2-D array (rows = recorded steps), trimmed to the recorded rows."""
+    S = data_dict.get("ModelStates")
+    if isinstance(S, np.ndarray) and S.ndim == 2:
+        return S[: data_dict.get("_state_count", S.shape[0])]
+    if isinstance(S, list) and S:
+        return np.vstack([np.asarray(s, dtype=np.float64) for s in S])
+    if isinstance(S, np.ndarray) and S.ndim == 1 and S.size:
+        return S[None, :]
+    return np.empty((0, 0))
 
 
 def print_aswing_summary(data_dict, max_vars_per_line=4):
@@ -496,114 +514,154 @@ def python2text(filename, control):
     with open(filename, "w") as f:
         f.write(content)
 
-def export_data_dict(data_dict, filepath, compress=True):
+def python2text_schedule(filename, times, controls):
     """
-    Serialise *data_dict* to a JSON file, optionally gzip-compressed.
+    Write an ASWING time-history control file with one row per time.
 
-    numpy arrays (ModelStates entries) are converted to nested Python lists so
-    that the file is plain JSON with no binary blobs.  All other values are
-    already JSON-compatible (str, float, bool, list, None).
+    ASWING evaluates the trace at the absolute time of each new time level (spline
+    through the rows), so a row (t_{k+1}, u_k) per step applies u_k exactly over the
+    step that ends at t_{k+1}.
 
-    Parameters
-    ----------
-    data_dict : dict   – the dictionary to export
-    filepath  : str    – destination path, e.g. "results/run01"
-                         Extension is added automatically:
-                           compress=True  → .json.gz
-                           compress=False → .json
-    compress  : bool   – gzip the output (default: True)
-
-    Returns
-    -------
-    filepath : str     – the path actually written
+    times    : sequence of absolute times [s]
+    controls : {name: sequence of values, same length as times}
     """
-    print("[IO FILEPATH]",filepath)
+    names = list(controls.keys())
+    cols = [np.asarray(controls[n], dtype=float) for n in names]
+    if any(len(c) != len(times) for c in cols):
+        raise ValueError("every control column needs one value per time")
+    if len(times) > 9999:
+        raise ValueError("ASWING reads at most 10000 rows (NSPX) per control file")
+    rows = ["time " + " ".join(names)]
+    for i, t in enumerate(times):
+        rows.append(repr(float(t)) + "\t" + "\t".join(repr(float(c[i])) for c in cols))
+    with open(filename, "w") as f:
+        f.write("\n".join(rows) + "\n")
+
+
+def _serialisable(obj):
+    """Recursively convert numpy types / arrays to plain Python (for JSON)."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, (list, tuple)):
+        return [_serialisable(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _serialisable(v) for k, v in obj.items()}
+    return obj
+
+
+def export_data_dict(data_dict, filepath, compress=True, fmt=None):
+    """
+    Save a WingLoop data dictionary.
+
+    fmt="npz" (default when `filepath` ends with .npz, and WingLoop's default output):
+        one compressed .npz; ModelStates as one float32 array (ASWING computes in single
+        precision and prints 9 significant digits, which identify one float32 value, so
+        float32 keeps ASWING's values exactly), every variable as its own array, names/units/
+        metadata as JSON in "__meta__". About 3x smaller than the .json.gz (test case:
+        1.7 vs 4.7 MB) and loaded without parsing text.
+    fmt="json": V2 format, .json.gz (compress=True) or .json.
+
+    Returns the path written. Keys starting with "_" (internal bookkeeping) are not saved.
+    """
     import json, gzip, os
-
-    # Strip any existing extension, then re-apply the correct one
-    for suffix in (".json.gz", ".json"):
+    if fmt is None:
+        fmt = "npz" if filepath.endswith(".npz") else "json"
+    for suffix in (".json.gz", ".json", ".npz"):
         if filepath.endswith(suffix):
             filepath = filepath[: -len(suffix)]
             break
-    filepath += ".json.gz" if compress else ".json"
-
     os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
+    states = model_states_array(data_dict)
 
-    def _make_serialisable(obj):
-        """Recursively convert numpy types / arrays to plain Python."""
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        if isinstance(obj, (np.integer,)):
-            return int(obj)
-        if isinstance(obj, (np.floating,)):
-            return float(obj)
-        if isinstance(obj, (np.bool_,)):
-            return bool(obj)
-        if isinstance(obj, list):
-            return [_make_serialisable(v) for v in obj]
-        if isinstance(obj, dict):
-            return {k: _make_serialisable(v) for k, v in obj.items()}
-        return obj  # str, float, int, bool, None → already fine
-
-    # Filter pre-allocation keys, then serialise
-    serialisable = {k: v for k, v in data_dict.items() if not k.startswith("_")}
-    serialisable = _make_serialisable(serialisable)
-
-    json_bytes = json.dumps(serialisable, indent=2, ensure_ascii=False).encode("utf-8")
-
-    if compress:
-        with gzip.open(filepath, "wb", compresslevel=6) as f:
-            f.write(json_bytes)
+    if fmt == "npz":
+        filepath += ".npz"
+        names = list(data_dict.get("ModelVariables", {}).keys())
+        meta = {
+            "format": "WingLoop-npz-1",
+            "ModelName": data_dict.get("ModelName"),
+            "ModelParameters": _serialisable(data_dict.get("ModelParameters", {})),
+            "Metadata": _serialisable(data_dict.get("Metadata", {})),
+            "variables": [{"name": n,
+                           "unit": data_dict["ModelVariables"][n].get("unit"),
+                           "latex": data_dict["ModelVariables"][n].get("latex")} for n in names],
+        }
+        arrays = {"__meta__": np.array(json.dumps(meta, ensure_ascii=False)),
+                  "ModelStates": states.astype(np.float32)}
+        for i, n in enumerate(names):
+            vals = data_dict["ModelVariables"][n]["values"]
+            arr = np.asarray(vals)
+            if arr.dtype == object:
+                arr = np.asarray([np.nan if v is None else v for v in vals], dtype=float)
+            arrays[f"v{i}"] = arr
+        np.savez_compressed(filepath, **arrays)
+    elif fmt == "json":
+        filepath += ".json.gz" if compress else ".json"
+        out = {k: v for k, v in data_dict.items() if not k.startswith("_")}
+        out["ModelStates"] = states
+        payload = json.dumps(_serialisable(out), indent=2, ensure_ascii=False).encode("utf-8")
+        if compress:
+            with gzip.open(filepath, "wb", compresslevel=6) as f:
+                f.write(payload)
+        else:
+            with open(filepath, "wb") as f:
+                f.write(payload)
     else:
-        with open(filepath, "wb") as f:
-            f.write(json_bytes)
+        raise ValueError("fmt must be 'npz' or 'json'")
 
-    n_vars   = len(data_dict.get("ModelVariables", {}))
-    n_states = len(data_dict.get("ModelStates", []))
-    size_kb  = os.path.getsize(filepath) / 1024
-    print(f"[PyControl_IO] Saved → {filepath}  "
-          f"({n_vars} variables, {n_states} state snapshot(s), {size_kb:.1f} KB)")
+    print(f"[PyControl_IO] Saved -> {filepath}  ({len(data_dict.get('ModelVariables', {}))} variables, "
+          f"{states.shape[0]} state snapshot(s), {os.path.getsize(filepath) / 1024:.1f} KB)")
     return filepath
 
-def import_data_dict(filepath):
-    import json, gzip, os
 
-    # Strip any known extension to get the bare stem
+def import_data_dict(filepath):
+    """
+    Load a file written by export_data_dict (.npz, .json.gz or .json; the extension may be
+    omitted, then .npz, .json.gz and .json are tried in that order).
+
+    Returns the V2 dictionary layout: ModelName, ModelParameters, ModelVariables
+    {name: {"values": list, "unit", "latex"}}, ModelStates (2-D float64 array),
+    plus Metadata when present.
+    """
+    import json, gzip, os
     stem = filepath
-    for suffix in (".json.gz", ".json"):
+    for suffix in (".json.gz", ".json", ".npz"):
         if stem.endswith(suffix):
             stem = stem[: -len(suffix)]
             break
-
-    # Try compressed first, then plain
-    candidates = [stem + ".json.gz", stem + ".json"]
-
-    resolved = next((p for p in candidates if os.path.exists(p)), None)
+    candidates = [filepath] if os.path.exists(filepath) else []
+    candidates += [stem + ".npz", stem + ".json.gz", stem + ".json"]
+    resolved = next((p for p in candidates if os.path.isfile(p)), None)
     if resolved is None:
-        raise FileNotFoundError(
-            f"[PyControl_IO] Could not find file for: {filepath}\n"
-            f"  Tried: {candidates}"
-        )
+        raise FileNotFoundError(f"[PyControl_IO] Could not find file for: {filepath}\n  Tried: {candidates}")
 
-    if resolved.endswith(".gz"):
-        with gzip.open(resolved, "rb") as f:
-            data_dict = json.loads(f.read().decode("utf-8"))
+    if resolved.endswith(".npz"):
+        with np.load(resolved, allow_pickle=False) as z:
+            meta = json.loads(str(z["__meta__"]))
+            data_dict = {"ModelName": meta.get("ModelName"),
+                         "ModelParameters": meta.get("ModelParameters", {}),
+                         "Metadata": meta.get("Metadata", {}),
+                         "ModelVariables": {},
+                         "ModelStates": z["ModelStates"].astype(np.float64)}
+            for i, v in enumerate(meta["variables"]):
+                data_dict["ModelVariables"][v["name"]] = {"values": z[f"v{i}"].tolist(),
+                                                          "unit": v.get("unit"), "latex": v.get("latex")}
     else:
-        with open(resolved, "r", encoding="utf-8") as f:
-            data_dict = json.load(f)
+        opener = gzip.open if resolved.endswith(".gz") else open
+        with opener(resolved, "rb") as f:
+            data_dict = json.loads(f.read().decode("utf-8"))
+        raw = data_dict.get("ModelStates")
+        if isinstance(raw, list) and raw:
+            data_dict["ModelStates"] = np.array(raw, dtype=np.float64) if isinstance(raw[0], list) \
+                else np.array(raw, dtype=np.float64)
 
-    # Restore numpy arrays for ModelStates
-    raw_states = data_dict.get("ModelStates")
-    if isinstance(raw_states, list) and raw_states:
-        if isinstance(raw_states[0], list):
-            data_dict["ModelStates"] = [np.array(s) for s in raw_states]
-        else:
-            data_dict["ModelStates"] = np.array(raw_states)
-
-    n_vars   = len(data_dict.get("ModelVariables", {}))
-    n_states = len(data_dict.get("ModelStates", []))
-    print(f"[PyControl_IO] Loaded ← {resolved}  "
-          f"({n_vars} variables, {n_states} state snapshot(s))")
+    print(f"[PyControl_IO] Loaded <- {resolved}  ({len(data_dict.get('ModelVariables', {}))} variables, "
+          f"{len(data_dict.get('ModelStates', []))} state snapshot(s))")
     return data_dict
 
 if __name__=="__main__":

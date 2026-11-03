@@ -1,11 +1,22 @@
+# =============================================================================
+# WingLoop — ASW_Helpers (post-processing: videos, stroboscopic images, plots)
+# =============================================================================
+# Copyright (c) 2024-2026 Leonardo Avoni (avonileonardo@gmail.com)
+# Video export options: Matteo Alfonso Incarbone (WingLoop_V3.0 fork, 2026)
+#
+# This file is part of WingLoop.
+# WingLoop is licensed under CC BY-NC-SA 4.0 (Non-Commercial use only).
+# Full license: https://creativecommons.org/licenses/by-nc-sa/4.0/
+# =============================================================================
+# matplotlib is imported inside the functions that plot (WingLoop does not import
+# it unless asked to plot).
 import os
 import re
 import time
 import shutil
-from WingLoop_Library import Aswing_Director
-import matplotlib.pyplot as plt
+from queue import Empty
+from .Aswing_Director import Aswing_Director
 import numpy as np
-from matplotlib.animation import FuncAnimation
 
 import subprocess
 import glob
@@ -29,6 +40,13 @@ def VideoPlot_Generate_postscript_file(
     input_files,
     video_folder,
     aswing_alias="aswing_stable",
+    aswing_path=None,
+    movie_time_limit=60.0,
+    movie_start_point=1,
+    Dt=0.1,
+    movie_chunk_duration=10.0,
+    movie_speed_factor=None,
+    plot_options=None,
     stable_duration=1.0,
     poll_interval=0.1,
     timeout=30
@@ -45,6 +63,12 @@ def VideoPlot_Generate_postscript_file(
     input_files       : list[str]  - ordered list of files to load (point, settings, results…)
     video_folder      : str        - destination folder for the output .ps file
     aswing_alias      : str        - shell alias or path for the ASWING executable
+    movie_time_limit  : float      - ASWING movie time limit, normally T_sim
+    movie_start_point : int        - first ASWING time-march point used for the movie
+    Dt                : float      - simulation time step, used to advance chunk start points
+    movie_chunk_duration : float   - kept for backward compatibility; not used by default
+    movie_speed_factor : float     - ASWING slow-motion factor. Bigger means faster.
+    plot_options : dict            - optional ASWING plot toggles, e.g. camera_movement, wake_plotting
     stable_duration   : float      - seconds plot.ps must be unchanged to be considered done
     poll_interval     : float      - seconds between stability checks
     timeout           : float      - max seconds to wait for plot.ps before raising TimeoutError
@@ -62,11 +86,13 @@ def VideoPlot_Generate_postscript_file(
 
     # ── Launch ASWING ──────────────────────────────────────────────────────
     print(f"[ASW_Helpers] Starting ASWING with geometry: {geometry_filename}")
+    # interactive / timed session (the movie commands are answered with fixed waits)
     ASW_handler = Aswing_Director(
-        aswing_path=None,
+        aswing_path=aswing_path,
         aswing_alias=aswing_alias,
         wait_time=0.03,
-        finished_writing_file_check_timestep=0.001
+        finished_writing_file_check_timestep=0.001,
+        sync="timer",
     )
     ASW_handler.start_aswing(
         directory=reference_folder,
@@ -105,11 +131,36 @@ def VideoPlot_Generate_postscript_file(
 
     # ── Trigger hardcopy ───────────────────────────────────────────────────
     print("[ASW_Helpers] Triggering hardcopy sequence...")
-    ASW_handler.send_command_and_receive("O")
-    ASW_handler.send_command_and_receive("H")
-    ASW_handler.send_command_and_receive(" ")
-    ASW_handler.send_command_and_receive(".")
-    ASW_handler.send_command_and_receive("V")
+    option_menu_output, _ = ASW_handler.send_command_and_receive("O")      # Entra nel sottomenu Option
+    _apply_aswing_plot_options(ASW_handler, option_menu_output, plot_options)
+    ASW_handler.send_command_and_receive("H")      # Attiva la registrazione video (Hardcopy)
+    ASW_handler.send_command_and_receive("T")      # Seleziona 'Time-of-movie limit'
+    ASW_handler.send_command_and_receive(str(float(movie_time_limit)))  # Imposta il limite reale della simulazione
+
+    if movie_speed_factor is None:
+        # ASWING can stop at an interactive "Continue with new slo-mo factor?"
+        # prompt for movies longer than roughly ten seconds. A larger slow-mo
+        # factor makes the true ASWING movie render faster without changing the
+        # simulated trajectory stored in the PostScript frames.
+        movie_speed_factor = max(1.0, float(movie_time_limit) / 5.0)
+
+    print(f"[ASW_Helpers] Setting ASWING movie speed factor: {movie_speed_factor:.3f}")
+    ASW_handler.send_command_and_receive("S")
+    ASW_handler.send_command_and_receive(str(float(movie_speed_factor)))
+    ASW_handler.send_command_and_receive(" ")      # Premi Invio per uscire da Option
+
+    print(f"[ASW_Helpers] Selecting movie start point: {movie_start_point}")
+    ASW_handler.send_command_and_receive(str(int(movie_start_point)))
+
+    ASW_handler.send_command_and_receive(".")      # Passa alla modalità transitoria
+    print("[ASW_Helpers] Starting ASWING View movie command...")
+    stdout, _ = ASW_handler.send_command_and_receive("V", custom_timer=1.0)  # Avvia il rendering (View movie)
+    _answer_movie_speed_prompt_if_present(
+        ASW_handler,
+        initial_stdout=stdout,
+        movie_speed_factor=movie_speed_factor,
+        timeout=3.0,
+    )
 
     # ── Wait for plot.ps ───────────────────────────────────────────────────
     source_ps = os.path.join(base_dir, reference_folder, "plot.ps")
@@ -138,6 +189,96 @@ def VideoPlot_Generate_postscript_file(
     print(f"[ASW_Helpers] Done. Postscript file ready at: {target_ps}")
 
     return target_ps
+
+
+def _answer_movie_speed_prompt_if_present(
+    ASW_handler,
+    initial_stdout="",
+    movie_speed_factor=1.0,
+    timeout=3.0,
+):
+    """
+    ASWING asks an extra slow-motion prompt for longer movies. If we do not
+    answer it, the Python side waits forever for plot.ps even though ASWING is
+    waiting for keyboard input.
+    """
+    buffer = initial_stdout or ""
+    start_time = time.time()
+
+    while time.time() - start_time < timeout:
+        if "Enter slow-motion factor" in buffer:
+            print("[ASW_Helpers] ASWING requested a movie speed factor.")
+            ASW_handler.send_command_and_receive(str(float(movie_speed_factor)), custom_timer=0.3)
+            return True
+
+        if "Continue with new slo-mo factor" in buffer:
+            print("[ASW_Helpers] ASWING requested a movie speed confirmation.")
+            ASW_handler.send_command_and_receive("Y", custom_timer=0.3)
+            ASW_handler.send_command_and_receive(str(float(movie_speed_factor)), custom_timer=0.3)
+            return True
+
+        try:
+            line = ASW_handler.stdout_queue.get_nowait()
+            buffer += line
+            if ASW_handler.print_output:
+                print(line, end="")
+        except Empty:
+            time.sleep(0.05)
+
+    return False
+
+
+def _apply_aswing_plot_options(ASW_handler, option_menu_output, plot_options):
+    if not plot_options:
+        return
+
+    option_specs = {
+        "camera_movement": {
+            "command": "M",
+            "label": "camera-movement",
+            "default": True,
+        },
+        "wake_plotting": {
+            "command": "W",
+            "label": "wake-plotting",
+            "default": False,
+        },
+    }
+
+    menu_text = option_menu_output or ""
+    for option_name, desired_value in plot_options.items():
+        if option_name not in option_specs:
+            continue
+
+        spec = option_specs[option_name]
+        desired_state = bool(desired_value)
+        current_state = _parse_aswing_toggle_state(
+            menu_text,
+            spec["label"],
+            spec["default"],
+        )
+
+        print(
+            f"[ASW_Helpers] Plot option {option_name}: "
+            f"current={current_state}, desired={desired_state}"
+        )
+
+        if current_state != desired_state:
+            menu_text, _ = ASW_handler.send_command_and_receive(spec["command"])
+            print(f"[ASW_Helpers] Plot option {option_name} toggled.")
+
+
+def _parse_aswing_toggle_state(menu_text, label, default_value):
+    pattern = rf"\b{re.escape(label)}\s+toggle\s+([TF])\b"
+    match = re.search(pattern, menu_text or "", flags=re.IGNORECASE)
+    if not match:
+        print(
+            f"[ASW_Helpers] Warning: could not read ASWING option '{label}'. "
+            f"Assuming default={default_value}."
+        )
+        return bool(default_value)
+
+    return match.group(1).upper() == "T"
 
 
 def _delete_last_n_pages_ps(filepath, n):
@@ -216,7 +357,9 @@ def Generate_Analysis_Videos(
     videofile ="gif",
     transpose=None, 
     quality="medium", 
-    keep_frames=False
+    keep_frames=False,
+    max_frames=600,
+    target_duration=None
 ):
     """
     Converts a multi-page PostScript file into MP4, GIF, and WebM.
@@ -228,21 +371,60 @@ def Generate_Analysis_Videos(
     transpose   : int   - None, 1 (90 CW), 2 (90 CCW)
     quality     : str   - "high", "medium", "low" (controls DPI and compression)
     keep_frames : bool  - If True, PNG frames are not deleted
+    max_frames  : int   - Maximum frames sent to Ghostscript/FFmpeg.
+                          Longer simulations are automatically downsampled,
+                          while preserving the video duration.
+    target_duration : float
+                          If set, the exported movie is played in at most this
+                          many seconds. Useful for GIF previews of long runs.
     """
+
+    if isinstance(ps_filepath, (list, tuple)):
+        if videofile != "mp4":
+            raise ValueError("Chunked video generation currently supports mp4 output only.")
+
+        segment_paths = []
+        for i, ps_chunk in enumerate(ps_filepath, start=1):
+            print(f"[Video] Converting chunk {i}/{len(ps_filepath)} to MP4...")
+            segment_paths.append(
+                Generate_Analysis_Videos(
+                    ps_chunk,
+                    Dt=Dt,
+                    videofile="mp4",
+                    transpose=transpose,
+                    quality=quality,
+                    keep_frames=keep_frames,
+                    max_frames=max_frames,
+                    target_duration=target_duration,
+                )
+            )
+
+        return _concat_mp4_segments(segment_paths)
     
     # 1. Setup paths and dependencies
     _check_dependency("gs", "Ghostscript -> sudo apt install ghostscript")
     _check_dependency("ffmpeg", "FFmpeg -> sudo apt install ffmpeg")
 
+    ps_filepath, frame_stride, n_pages_before, n_pages_after = _downsample_ps_for_video(
+        ps_filepath,
+        max_frames=max_frames,
+    )
+
     base_path = os.path.splitext(ps_filepath)[0]
     output_dir = os.path.dirname(ps_filepath)
     frames_dir = base_path + "_frames"
-    fps = 1.0 / Dt
+    if target_duration is not None and target_duration > 0 and n_pages_after > 0:
+        original_duration = max(float(Dt) * max(n_pages_before - 1, 1), float(Dt))
+        export_duration = min(float(target_duration), original_duration)
+        fps = max(1.0, n_pages_after / export_duration)
+    else:
+        effective_dt = Dt * frame_stride
+        fps = 1.0 / effective_dt
     
     # Quality Presets
     presets = {
-        "high":   {"dpi": 300, "crf_mp4": 18, "crf_webm": 20, "width": 1200},
-        "medium": {"dpi": 150, "crf_mp4": 23, "crf_webm": 30, "width": 800},
+        "high":   {"dpi": 150, "crf_mp4": 18, "crf_webm": 20, "width": 1400},
+        "medium": {"dpi": 150, "crf_mp4": 23, "crf_webm": 30, "width": 1000},
         "low":    {"dpi": 72,  "crf_mp4": 28, "crf_webm": 40, "width": 600}
     }
     cfg = presets.get(quality, presets["medium"])
@@ -251,7 +433,10 @@ def Generate_Analysis_Videos(
     frame_pattern = os.path.join(frames_dir, "frame_%04d.png")
 
     # 2. Step 1: Rasterize PS to PNG (Ghostscript)
-    print(f"--- Rasterizing PS at {cfg['dpi']} DPI ---")
+    print(
+        f"--- Rasterizing PS at {cfg['dpi']} DPI "
+        f"({n_pages_after}/{n_pages_before} frame pages, stride={frame_stride}, fps={fps:.3f}) ---"
+    )
     gs_cmd = [
         "gs", "-dBATCH", "-dNOPAUSE", "-dQUIET", "-sDEVICE=png16m",
         f"-r{cfg['dpi']}", f"-sOutputFile={frame_pattern}", ps_filepath
@@ -287,7 +472,7 @@ def Generate_Analysis_Videos(
         gif_vf = (
             vf_base + 
             f"scale={cfg['width']}:-1:flags=lanczos,split[s0][s1];"
-            "[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=3"
+            "[s0]palettegen=stats_mode=full[p];[s1][p]paletteuse=dither=sierra2_4a"
         )
         gif_cmd = [
             "ffmpeg", "-y", "-framerate", str(fps), "-i", frame_pattern,
@@ -328,6 +513,96 @@ def _run(cmd, error_prefix):
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"{error_prefix}:\n{result.stderr.strip()}")
+
+
+def _concat_mp4_segments(segment_paths):
+    if not segment_paths:
+        raise RuntimeError("No MP4 segments were produced.")
+
+    if len(segment_paths) == 1:
+        return segment_paths[0]
+
+    output_dir = os.path.dirname(segment_paths[0])
+    first_base = os.path.splitext(os.path.basename(segment_paths[0]))[0]
+    first_base = re.sub(r"_part\d{3}.*$", "", first_base)
+    output_path = os.path.join(output_dir, first_base + "_full.mp4")
+    concat_file = os.path.join(output_dir, first_base + "_concat_list.txt")
+
+    with open(concat_file, "w", encoding="utf-8") as f:
+        for segment in segment_paths:
+            safe_segment = os.path.abspath(segment).replace("'", "'\\''")
+            f.write(f"file '{safe_segment}'\n")
+
+    print(f"[Video] Concatenating {len(segment_paths)} MP4 segment(s)...")
+    concat_cmd = [
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+        "-i", concat_file, "-c", "copy", output_path,
+    ]
+    _run(concat_cmd, "FFmpeg MP4 concat failed")
+
+    try:
+        os.remove(concat_file)
+    except OSError:
+        pass
+
+    print(f"[Video] Concatenated MP4 saved: {output_path}")
+    return output_path
+
+
+def _downsample_ps_for_video(ps_filepath, max_frames=600):
+    """Keep at most max_frames PostScript pages before rasterizing a long movie."""
+    if max_frames is None or max_frames <= 0:
+        return ps_filepath, 1, _count_ps_pages(ps_filepath), _count_ps_pages(ps_filepath)
+
+    with open(ps_filepath, "r", encoding="latin-1") as f:
+        content = f.read()
+
+    page_matches = list(re.finditer(r"^%%Page:", content, re.MULTILINE))
+    n_pages = len(page_matches)
+
+    if n_pages == 0 or n_pages <= max_frames:
+        return ps_filepath, 1, n_pages, n_pages
+
+    stride = max(1, int((n_pages + max_frames - 1) // max_frames))
+    keep_indices = list(range(0, n_pages, stride))
+    if keep_indices[-1] != n_pages - 1:
+        keep_indices.append(n_pages - 1)
+
+    first_page_start = page_matches[0].start()
+    header = content[:first_page_start]
+    header = re.sub(r"^%%Pages:\s+\d+", f"%%Pages: {len(keep_indices)}", header, count=1, flags=re.MULTILINE)
+
+    page_chunks = []
+    for idx in keep_indices:
+        start = page_matches[idx].start()
+        if idx + 1 < n_pages:
+            end = page_matches[idx + 1].start()
+        else:
+            end = len(content)
+        page_chunks.append(content[start:end].rstrip())
+
+    downsampled_path = os.path.splitext(ps_filepath)[0] + f"_downsampled_x{stride}.ps"
+    with open(downsampled_path, "w", encoding="latin-1") as f:
+        f.write(header.rstrip())
+        f.write("\n")
+        f.write("\n".join(page_chunks))
+        if "%%EOF" not in page_chunks[-1]:
+            f.write("\n%%Trailer\n%%EOF\n")
+
+    print(
+        f"[Video] Downsampled PostScript pages: {n_pages} -> {len(keep_indices)} "
+        f"(stride={stride}, max_frames={max_frames})."
+    )
+
+    return downsampled_path, stride, n_pages, len(keep_indices)
+
+
+def _count_ps_pages(ps_filepath):
+    try:
+        with open(ps_filepath, "r", encoding="latin-1") as f:
+            return sum(1 for line in f if line.startswith("%%Page:"))
+    except OSError:
+        return 0
     
 
 
@@ -437,6 +712,9 @@ def Plot_Timeseries(filenames, indices, names, legend_names=None, use_iteration=
         If True, uses column 1 (iteration 'i') as the x-axis. 
         If False (default), uses column 2 (time 't') as the x-axis.
     """
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation
+
     # Force filenames into a list if a single string is passed
     if isinstance(filenames, str):
         filenames = [filenames]
@@ -524,6 +802,9 @@ def Create_Timeseries_GIF(filenames, indices, names, output_gif='timeseries.gif'
     num_frames : int
         Total number of frames in the animation.
     """
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation
+
     if isinstance(filenames, str):
         filenames = [filenames]
         

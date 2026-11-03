@@ -17,330 +17,415 @@
 
 """
 ====================================================================================
-Aswing Director
-
-Author: Leonardo AVONI
-Date: 21/10/2024
-Email: avonileonardo@gmail.com
-Last modified: 10/03/2026
-Version 8
-
+Aswing Director — WingLoop 3.0
 ====================================================================================
 
-Description:
-    This Python class provides an interface to control the Fortran-based ASWING program 
-    through the terminal using Python's subprocess module. It allows you to start the ASWING 
-    process, send commands, read the program's output, and close the program cleanly. The 
-    class handles non-blocking reads from ASWING's standard output and error streams by 
-    using threading and queues for real-time interaction.
-    
-    Note that this class is made to send commands to ASWING; but there is no real guarantee 
-    for the moment that ASWING is on time with Python. For example, we may be sending 7 commands,
-    but in reality ASWING will still be working at command 1, and once it has finished he will be
-    going for command 2. For instance: "send_command_and_receive" will just send an ASWING command 
-    and that's it.
-    
-    The exception to that is when using "send_writefile_command_and_receive". This function will 
-    wait until the filename is written by ASWING before continuing
-    
-    If we want to keep a somewhat real-time sync from Python to ASWING, we should use "wait_time=0.03"
-    
-How To Install
-    Position yourself in the folder upstream of ASWING_Director_Library 
-    (the folder containing this __init__.py code)
-    Alongside that folder there should be the pyproject.toml
-    Open a terminal, and write "/usr/bin/python3 -m pip install --user -e ."
-    This will install it in Python, in editable mode (if you modify the code it 
-    will impact the package behavior)
-    Also: for VSCode to identify the imports: Add in the settings.json 
-        (File>Preferences>Settings, then top right corner)file the following:
-        "python.analysis.extraPaths": ["~/Bureau/01 Github/01_ASWING_Director"]
+Drives the Fortran ASWING executable as a subprocess (stdin/stdout).
 
-Features:
-- Aswing_Director: Class instance to which we specify the ASWING version, wait_time and 
-    finished_writing_file_check_timestep (the latter for "send_writefile_command_and_receive")
-- start_aswing: we start ASWING, eventually with an input file to use, and also specifying 
-    if we want prints or not. This print setting will be valid for all the code operation
-- send_command_and_receive method: used to send commands to ASWING, as long as there is no
-    need for time-synchronization
-- send_writefile_command_and_receive: used to send commands to ASWING (usually X command for 
-    transient simulation), without continuing until the state file we expect is ready from ASWING
-- quit_and_close_aswing: does what it says method 
+Synchronisation (V3)
+--------------------
+ASWING's menu prompts end with "   c>  ", "   s>  ", "   i>  ", "   r>  " or
+" y/n>  " and *no newline*. ASWING is started with
+GFORTRAN_UNBUFFERED_PRECONNECTED=y, so a prompt reaches Python as soon as ASWING
+prints it, and a reader thread collects the raw output (not line by line).
 
-Note:
-As for the Aswing program, use with multiple screens will lead to crash of the code. 
-Hence, use this code in singlescreen only, or disable the graphics
+    sync="prompt" (default)
+        send_command_and_receive() sends a command and returns once ASWING shows
+        its next prompt, i.e. once the command is finished. A file ASWING writes
+        is closed before the next prompt appears, so it is complete when the call
+        returns. Questions printed as a plain line (for example "Enter delta(t),
+        Nstep") are not prompts: pass `expect=` (a regex matched on the end of the
+        output) for those. Without `expect`, a command that prints no prompt
+        returns after `quiet_time` seconds without output (a fallback for
+        arbitrary user commands; WingLoop itself always passes `expect`).
+    sync="timer"
+        V2 behaviour: send, then collect output for a fixed time (custom_timer or
+        wait_time). Kept for scripts that depend on it.
 
-Tutorial:
-- an example is provided at the very end of this code
+Every prompt-synchronised command has a timeout (`command_timeout`, `write_timeout`
+for marches and file writes). On a timeout the ASWING process group is killed and
+ASWINGHangError is raised; if ASWING exits, ASWINGCrashError is raised.
 
-Changelog:
-- Version 4 (21/10/2024): first decent version working
-- Version 5 (28/10/2024):
-    in function start_aswing: added the "directory" input
-- Version 6 (30/10/2024): added "send_writefile_command_and_receive" function
-    to be used for instructions requiring to write a file, while also waiting 
-    for the file to be finished writing
-- Version 7 (06/11/2024): added customizable check_timestep in "send_writefile_command_and_receive"
-- Version 8 (03/12/2024): minor comments made
-- Version 9 (17/12/2024): added file length check (>0) in "send_writefile_command_and_receive"
-- Package Version (29/05/2025): the class is made package. Versions are now handled only via GitHub
-- Version 8 (10/03/2026): this version is now included within the WingLoop package
+Compatibility: `stdout_queue` / `stderr_queue` still receive ASWING's output (bounded
+to the last `queue_maxlen` chunks), so code that reads them keeps working.
+
+Executable: `aswing_path` may be the executable itself or its folder; the shell alias
+(`aswing_alias`, resolved through `bash -ic 'type <alias>'`) is only a fallback. Resolve
+the alias once in the main process: concurrent `bash -ic` shells in worker processes
+can be stopped by SIGTTOU.
+
+Changelog: V4 (21/10/2024) … V9 (17/12/2024), package (29/05/2025), WingLoop 2.0
+(10/03/2026); WingLoop 3.0 (11/2026): prompt synchronisation, timeouts and hang
+handling, single-threaded BLAS in the ASWING process, executable path or folder.
 ====================================================================================
 """
 
-
-import subprocess
 import os
-import time
+import re
 import sys
+import time
+import signal
 import threading
-from queue import Queue, Empty
-import inotify_simple
+import subprocess
+from collections import deque
+from queue import Empty
+
+__all__ = ["Aswing_Director", "ASWINGHangError", "ASWINGCrashError", "PROMPT_RE",
+           "resolve_aswing_executable"]
+
+# end of an ASKC/ASKS/ASKI/ASKR/ASKL prompt (ask1.f: FORMAT(/A,'   c>  ',$) etc.)
+PROMPT_RE = re.compile(r"(?:\s[cisr]|\sy/n)>  $")
+# plain-line question of the unsteady X command (oper.f, FORMAT 2052)
+MARCH_QUESTION_RE = re.compile(r"append steps\)[^\n]*\n\s*$")
+# a question ASWING asks before overwriting an existing file
+OVERWRITE_QUESTION_RE = re.compile(r"(exists\.[^\n]*(Overwrite|Append)[^\n]*\n\s*$)|(Overwrite\?\s*Y\s*\n\s*$)")
+
+
+class ASWINGHangError(RuntimeError):
+    """ASWING did not answer a command within its timeout (the process was killed)."""
+
+
+class ASWINGCrashError(RuntimeError):
+    """The ASWING process exited while a command was running."""
+
+
+def resolve_aswing_executable(aswing_path=None, aswing_alias=None):
+    """Return the absolute path of the ASWING executable.
+
+    aswing_path: the executable, or the folder that contains an executable named "aswing".
+    aswing_alias: shell alias used when aswing_path is None (fallback; slow, call once).
+    """
+    if aswing_path:
+        p = os.path.abspath(os.path.expanduser(str(aswing_path)))
+        if os.path.isdir(p):
+            p = os.path.join(p, "aswing")
+        if not (os.path.isfile(p) and os.access(p, os.X_OK)):
+            raise FileNotFoundError(f"ASWING executable not found or not executable: {p}")
+        return p
+    if not aswing_alias:
+        raise ValueError("Give aswing_path (executable or folder) or aswing_alias.")
+    try:
+        out = subprocess.check_output(f"bash -ic 'type {aswing_alias}'", shell=True, text=True,
+                                      stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL).strip()
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"Could not resolve ASWING alias '{aswing_alias}' (check ~/.bashrc).") from exc
+    m = re.search(r"`([^']+)'", out) or re.search(r"is (/\S+)$", out)
+    if not m:
+        raise RuntimeError(f"Could not parse an executable path from: {out!r}")
+    return resolve_aswing_executable(m.group(1))
+
+
+class _TailQueue:
+    """Bounded stand-in for queue.Queue (put/get/get_nowait/empty); drops the oldest items."""
+
+    def __init__(self, maxlen):
+        self._d = deque(maxlen=maxlen)
+        self._cv = threading.Condition()
+
+    def put(self, item):
+        with self._cv:
+            self._d.append(item)
+            self._cv.notify_all()
+
+    def get_nowait(self):
+        with self._cv:
+            if not self._d:
+                raise Empty
+            return self._d.popleft()
+
+    def get(self, block=True, timeout=None):
+        if not block:
+            return self.get_nowait()
+        with self._cv:
+            if not self._cv.wait_for(lambda: bool(self._d), timeout=timeout):
+                raise Empty
+            return self._d.popleft()
+
+    def empty(self):
+        with self._cv:
+            return not self._d
+
+    def qsize(self):
+        with self._cv:
+            return len(self._d)
+
 
 class Aswing_Director:
     """
-    A class to manage interaction with the ASWING software, enabling real-time communication, 
-    command execution, and file handling for aerodynamic and flight analysis.
-    Attributes:
-        aswing_path (str): Path to the ASWING executable.
-        wait_time (float): Default wait time used by send_command_and_receive for processing commands.
-        finished_writing_file_check_timestep (float): Timestep used by send_writefile_command_and_receive for checking file write completion.
-    Methods:
-        start_aswing(directory=".", filename=" ", print_output=True):
-            Starts the ASWING process, captures its output and error streams, and optionally prints them.
-        send_command_and_receive(command, custom_timer=None):
-            Sends a command to ASWING and retrieves its response, there's no time-sync with Python
-        send_writefile_command_and_receive(filename, custom_timer=None, append_or_overwrite=None):
-            Sends a command to write a file, waits for the file to be written, and retrieves the response. 
-            Does not proceed until the file is ready
-        quit_and_close_aswing():
-            Sends the QUIT command to ASWING and closes the process.
+    Interface to one ASWING process.
+
+    Parameters
+    ----------
+    aswing_path : str | None
+        ASWING executable, or the folder containing it. If None, `aswing_alias` is resolved.
+    aswing_alias : str | None
+        Shell alias of ASWING (fallback).
+    wait_time : float
+        sync="timer": collection time per command [s]. sync="prompt": unused, except as
+        the start-up wait in timer mode.
+    finished_writing_file_check_timestep : float
+        Polling interval [s] for the (fallback) file-completion checks. Default 2 ms.
+    write_timeout : float
+        Timeout [s] of time marches and file writes. A hard time step (many Newton restarts
+        and sub-steps) can take 40-45 s alone and > 100 s under parallel load. Default 1200 s.
+    command_timeout : float
+        Timeout [s] of other commands (trims can be long). Default: write_timeout.
+    sync : "prompt" | "timer"
+    quiet_time : float
+        sync="prompt": a command that prints no prompt and matches no `expect` returns after
+        this many seconds without new output.
+    single_thread_blas : bool
+        Set OMP/OPENBLAS/MKL thread counts to 1 in ASWING's environment (parallel runs).
     """
-    
-    def __init__(self, aswing_path,# "/home/daep/l.avoni/Bureau/02_ASWING/ASWING_Stable/bin/"
-                 aswing_alias,
-                 wait_time=0.03, #
-                 finished_writing_file_check_timestep=0.001):
-        
-        if aswing_path is None:
-            try:
-                type_output = subprocess.check_output(
-                    f"bash -ic 'type {aswing_alias}'",
-                    shell=True,
-                    text=True,
-                    stderr=subprocess.DEVNULL
-                ).strip()
-                # Output is: "aswing_stable is aliased to `/path/to/aswing'"
-                # Extract the path from between backtick and single quote
-                import re
-                match = re.search(r'`([^\']+)\'', type_output)
-                if not match:
-                    raise RuntimeError(f"Could not parse path from: {type_output}")
-                aswing_exec = match.group(1)
 
-            except subprocess.CalledProcessError:
-                raise RuntimeError(
-                    f"Could not find ASWING executable using alias '{aswing_alias}'. "
-                    "Check your .bashrc alias."
-                )
-
-            if not aswing_exec:
-                raise RuntimeError(
-                    f"Alias '{aswing_alias}' did not resolve to an executable."
-                )
-            aswing_path = os.path.dirname(aswing_exec)
-
-        self.aswing_path = aswing_path
+    def __init__(self, aswing_path=None, aswing_alias=None,
+                 wait_time=0.03,
+                 finished_writing_file_check_timestep=0.002,
+                 write_timeout=1200.0,
+                 command_timeout=None,
+                 sync="prompt",
+                 quiet_time=2.0,
+                 single_thread_blas=True,
+                 queue_maxlen=5000):
+        if sync not in ("prompt", "timer"):
+            raise ValueError("sync must be 'prompt' or 'timer'")
+        self.aswing_exe = resolve_aswing_executable(aswing_path, aswing_alias)
+        self.aswing_path = os.path.dirname(self.aswing_exe)   # V2 attribute (a folder)
         self.asw_process = None
-        self.stdout_queue = Queue() #where outputs are written
-        self.stderr_queue = Queue() #where error messages are written
-        self.wait_time=wait_time
+        self.wait_time = wait_time
         self.finished_writing_file_check_timestep = finished_writing_file_check_timestep
-        # maximum wait [s] for a requested file in send_writefile_command_and_receive_old.
-        # A single hard time step (many Newton restarts + sub-stepping) can take 40-45 s
-        # alone and > 100 s under parallel load (seen 2026-11-02), so callers that run
-        # strong transients may raise it; a hung ASWING must then be caught by an outer timeout.
-        self.write_timeout = 100.0
+        self.write_timeout = float(write_timeout)
+        self.command_timeout = float(command_timeout) if command_timeout is not None else None
+        self.sync = sync
+        self.quiet_time = float(quiet_time)
+        self.single_thread_blas = single_thread_blas
+        self.print_output = False
+        self.stdout_queue = _TailQueue(queue_maxlen)
+        self.stderr_queue = _TailQueue(queue_maxlen)
+        self._buf = []                 # chunks not yet returned by a prompt-synchronised command
+        self._cv = threading.Condition()
+        self._eof = False
+        self.last_output = ""
+        self.directory = None
 
-    def enqueue(self, pipe, queue):
-        """
-        Read output from the process and put it in the queue
-        """
+    # ------------------------------------------------------------------ process
+    def _reader(self, fd, mirror, to_buffer):
         try:
-            for line in iter(pipe.readline, ''):
-                if line:
-                    queue.put(line)
+            while True:
+                try:
+                    chunk = os.read(fd, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                text = chunk.decode("utf-8", errors="replace")
+                mirror.put(text)
+                if self.print_output:
+                    sys.stdout.write(text)
+                    sys.stdout.flush()
+                with self._cv:
+                    if to_buffer or self.sync == "prompt":
+                        self._buf.append(text)
+                    self._cv.notify_all()
         finally:
-            pipe.close()
+            if to_buffer:
+                with self._cv:
+                    self._eof = True
+                    self._cv.notify_all()
 
-    def start_aswing(self, directory=".", filename="hawk.asw",print_output=True):
-        """
-        This function starts ASWING, according to the previously defined ASWING 
-        version from the Aswing_Director class declaration.
-        Args:
-            filename (str): a filename of the .asw geometry file to be used (hawk.asw for example)
-            directory (str): The local folder where the geometry file is stored (. by default)
-            print_output (bool): True or False depending on if we want the output to be printed or not during code execution
-        """
-        # saving the current working directory
+    def start_aswing(self, directory=".", filename=None, print_output=True):
+        """Start ASWING in `directory` (os.chdir into it: WingLoop uses relative exchange files),
+        optionally with a geometry file; waits for the first prompt."""
         self.previous_directory = os.getcwd()
         self.print_output = print_output
-
-        # going to the directory where the UAV files are
         os.chdir(directory)
-
-        # starts ASWING, with the UAV file if provided
-        start_command = [os.path.join(self.aswing_path, "aswing")]
-
+        self.directory = os.getcwd()
+        cmd = [self.aswing_exe]
         if filename:
-            clean_name = filename.removesuffix(".asw")
-            start_command.append(clean_name)
-            print("[Aswing_Director]", clean_name)
-
-
-        self.asw_process = subprocess.Popen(start_command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1)  # Line-buffered for real-time interaction          
-
-        threading.Thread(target=self.enqueue, args=(self.asw_process.stdout, self.stdout_queue), daemon=True).start()
-        threading.Thread(target=self.enqueue, args=(self.asw_process.stderr, self.stderr_queue), daemon=True).start()
-
-        start_time = time.time() 
-        """
-        there is the need to make it run a few times in a loop because at the beginning it may be empty, idk
-        if we take out this while, it will print the data but at the next command, idk
-        """
-        while time.time() - start_time < self.wait_time:
-            try:
-                if self.print_output:
-                    print(self.stdout_queue.get_nowait(), end="")
-            except Empty:
-                pass
-
-            try:
-                if self.print_output:
-                    print(self.stderr_queue.get_nowait(), end="")
-            except Empty:
-                pass
-        
-        # changing the directory to the none we had previously
-        #os.chdir(previous_directory)
-
-
-    def send_command_and_receive(self, command, custom_timer=None):
-        """
-        Function used to send a command (OPER for example) to ASWING. The function returns
-        the printed output of ASWING to that command; but depending on how wait_time was defined, 
-        the reported output may not be in real time.
-        If we wish to wait longer for the code to send the output, we can define a custom_timer 
-        (in seconds) different from wait_time defined during Aswing_Director class initialization
-        
-        Args:
-            command (str): command to send (like OPER)
-            custom_timer (float): optional wait_time, if we do not want to use the default one from class initialization
-        """
-        standard_output = []
-        error_output = []
-
-        if custom_timer is not None:
-            timer=custom_timer
+            cmd.append(filename[:-4] if filename.endswith(".asw") else filename)
+        env = dict(os.environ, GFORTRAN_UNBUFFERED_PRECONNECTED="y")
+        if self.single_thread_blas:
+            for k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+                env[k] = "1"
+        self.asw_process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                            stderr=subprocess.PIPE, bufsize=0, env=env,
+                                            start_new_session=True)
+        threading.Thread(target=self._reader, args=(self.asw_process.stdout.fileno(), self.stdout_queue, True),
+                         daemon=True).start()
+        threading.Thread(target=self._reader, args=(self.asw_process.stderr.fileno(), self.stderr_queue, False),
+                         daemon=True).start()
+        if self.sync == "prompt":
+            self._wait(None, self._timeout(None), what="start-up")
         else:
-            timer= self.wait_time
+            time.sleep(self.wait_time)
 
-        start_time = time.time()
+    def is_alive(self):
+        return self.asw_process is not None and self.asw_process.poll() is None
 
-        # Send command
-        self.asw_process.stdin.write(command + "\n") #send the command with \n
-        self.asw_process.stdin.flush() #also sends the command, in case \n does not work
-        # Collect output within timeout period
-        while time.time() - start_time < timer:
+    def kill(self):
+        """Kill the ASWING process group (used on hangs)."""
+        if self.asw_process is None:
+            return
+        try:
+            os.killpg(self.asw_process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
             try:
-                stdout_line = self.stdout_queue.get_nowait()
-                standard_output.append(stdout_line)
-                if self.print_output:
-                    print(stdout_line, end="")
-            except Empty:
+                self.asw_process.kill()
+            except Exception:
                 pass
+        try:
+            self.asw_process.wait(5)
+        except Exception:
+            pass
 
-            try:
-                stderr_line = self.stderr_queue.get_nowait()
-                error_output.append(stderr_line)
-                if self.print_output:
-                    print(stderr_line, end="")
-            except Empty:
-                pass
-        return ''.join(standard_output), ''.join(error_output)
+    # ------------------------------------------------------------------ commands
+    def _timeout(self, timeout):
+        if timeout is not None:
+            return float(timeout)
+        return self.command_timeout if self.command_timeout is not None else self.write_timeout
 
-    def send_writefile_command_and_receive_old(self, filename, custom_timer=None, append_or_overwrite = None,
-                                               end_marker=None):
+    def _wait(self, expect, timeout, what):
+        """Wait until the collected output ends with a prompt or matches `expect`; return it."""
+        rx = re.compile(expect) if isinstance(expect, str) else expect
+        t0 = time.time()
+        last_len, last_change = 0, t0
+        with self._cv:
+            while True:
+                text = "".join(self._buf)
+                tail = text[-600:]
+                if PROMPT_RE.search(tail) or (rx is not None and rx.search(tail)):
+                    self._buf.clear()
+                    self.last_output = text
+                    return text
+                now = time.time()
+                if len(text) != last_len:
+                    last_len, last_change = len(text), now
+                if self._eof:
+                    self._buf.clear()
+                    raise ASWINGCrashError(f"ASWING exited during {what!r}. Last output:\n{text[-1500:]}")
+                if rx is None and now - last_change > self.quiet_time and text.endswith("\n"):
+                    self._buf.clear()
+                    self.last_output = text
+                    return text
+                if now - t0 > timeout:
+                    self._buf.clear()
+                    self.kill()
+                    raise ASWINGHangError(f"ASWING gave no answer to {what!r} within {timeout:g} s "
+                                          f"(process killed). Last output:\n{text[-1500:]}")
+                self._cv.wait(timeout=0.05 if rx is None else 0.5)
+
+    def _send(self, command):
+        if not self.is_alive():
+            raise ASWINGCrashError(f"ASWING is not running (command {command!r}).")
+        try:
+            self.asw_process.stdin.write((command + "\n").encode())
+            self.asw_process.stdin.flush()
+        except BrokenPipeError as exc:
+            raise ASWINGCrashError(f"ASWING closed its input (command {command!r}).") from exc
+
+    def send_command_and_receive(self, command, custom_timer=None, expect=None, timeout=None):
+        """Send one command; return (stdout, stderr).
+
+        sync="prompt": returns once ASWING shows its next prompt or the output matches
+        `expect`; `custom_timer` is ignored. sync="timer": V2 behaviour.
         """
-        Function used when iterating the X commands of WingLoop
-        The function asks to write the file, and waits until the file is written to continue, granting some type of 
-        synchronization between Python and ASWING. It returns the outputs of the "send_command_and_receive" function, as well as 
-        the time taken for the function to do its job; keep in mind that here the time measured is not the real time, since ASWING
-        runs in parallel to python most of the time
-        
-        Args:
-            filename (str): filename we expect to be written
-            custom_timer (float, optional): Used to wait after the command is sent. If None, the default wait_time is used.
-            append_or_overwrite (str, optional): defines if we want to append "a" the file, or overwrite "o" it.
-            end_marker (str, optional): text the complete file ends with (e.g. "ENDEDPRINTINGSTATES"
-                for an ASWING point file). If given, a stable size is not enough: the function also
-                waits until the end of the file contains the marker. Under CPU load (parallel ASWING
-                runs) a write can pause longer than the size-check interval, and the size test alone
-                then returns a truncated file (seen 2026-11-01: spurious "not converged" steps and
-                lost/duplicated samples after WingLoop's retry).
+        if self.sync == "timer":
+            timer = self.wait_time if custom_timer is None else custom_timer
+            out, err = [], []
+            self._send(command)
+            t0 = time.time()
+            while time.time() - t0 < timer:
+                for q, acc in ((self.stdout_queue, out), (self.stderr_queue, err)):
+                    try:
+                        acc.append(q.get_nowait())
+                    except Empty:
+                        pass
+            with self._cv:
+                self._buf.clear()
+            return "".join(out), "".join(err)
+        with self._cv:
+            self._buf.clear()
+        self._send(command)
+        return self._wait(expect, self._timeout(timeout), what=command), ""
 
+    def send_writefile_command_and_receive(self, filename, custom_timer=None, append_or_overwrite=None,
+                                           end_marker=None, timeout=None):
+        """Answer a file-name question with `filename` (the write command was sent before),
+        answer an overwrite question if one comes, and wait until the file is complete.
+
+        Returns (stdout, stderr, seconds). In prompt mode the file is complete when ASWING
+        prompts again; `end_marker` is then checked once. Raises if the file is missing or
+        incomplete.
         """
-
-        internal_start_time = time.time()
-        tt=custom_timer
-        a,b = self.send_command_and_receive(filename, custom_timer=tt)
-        
-        # provide the possibility to append or overwrite the output file, instead of deleting it each time
+        t0 = time.time()
+        tmo = self.write_timeout if timeout is None else timeout
+        if self.sync == "prompt":
+            out, err = self.send_command_and_receive(filename, expect=OVERWRITE_QUESTION_RE, timeout=tmo)
+            if OVERWRITE_QUESTION_RE.search(out[-600:]):
+                more, _ = self.send_command_and_receive(append_or_overwrite or "O", timeout=tmo)
+                out += more
+            if not os.path.exists(filename):
+                raise RuntimeError(f"ASWING did not write {filename!r} (cwd {os.getcwd()}). Output:\n{out[-1500:]}")
+            if end_marker is not None and not self._ends_with(filename, end_marker):
+                raise RuntimeError(f"{filename!r} is incomplete (no {end_marker!r}) although ASWING returned.")
+            return out, err, time.time() - t0
+        # timer mode: V2 polling (now at `finished_writing_file_check_timestep`, not a busy loop)
+        out, err = self.send_command_and_receive(filename, custom_timer=custom_timer)
         if append_or_overwrite:
-            c,d = self.send_command_and_receive(append_or_overwrite, custom_timer=tt)            
-            # storing the output here, for the output
-            a = a+c
-            b = b+d       
-        
-        timeout = getattr(self, "write_timeout", 100.0)
-        last_size = -1
-        
-        # for the following: decoupling the "is the file there" part, with the "how long is it" helps speed up slightly the time
-        # also, when checking the file length, there are actually 2 terations: first the file is length 0, then final length; no in-between apparently
+            o2, e2 = self.send_command_and_receive(append_or_overwrite, custom_timer=custom_timer)
+            out, err = out + o2, err + e2
+        self.wait_for_file(filename, end_marker=end_marker, timeout=tmo)
+        return out, err, time.time() - t0
 
-        #print("[send_wri..ve_old] Current working path:",os.getcwd())
-        #print("[send_wri..ve_old] File we are currently looking for:",filename)
-        while time.time() - internal_start_time < timeout:
-            if os.path.exists(filename):
-                #buffer_time_internal_internal=time.time()
-                break
-            time.sleep(0.00000001)  # Check every 10 mus
+    # V2 name (both write helpers are the same in V3)
+    send_writefile_command_and_receive_old = send_writefile_command_and_receive
 
-        condition=1
-        while time.time() - internal_start_time < timeout:
+    def wait_for_file(self, filename, end_marker=None, timeout=None):
+        """Poll until `filename` exists, has a stable non-zero size and (optionally) ends with end_marker."""
+        timeout = self.write_timeout if timeout is None else timeout
+        t0, last = time.time(), -1
+        while time.time() - t0 < timeout:
             if os.path.exists(filename):
-                #current_size = os.path.getsize(file_path)
-                current_size = os.stat(filename).st_size
-                if current_size == last_size:
-                    #checking if the file has actually something written inside
-                    if current_size>0 and (end_marker is None or self._ends_with(filename, end_marker)):
-                        condition=0
-                        break
-                last_size = current_size
+                size = os.stat(filename).st_size
+                if size > 0 and size == last and (end_marker is None or self._ends_with(filename, end_marker)):
+                    return
+                last = size
+            if not self.is_alive():
+                raise ASWINGCrashError(f"ASWING exited while writing {filename!r}.")
             time.sleep(self.finished_writing_file_check_timestep)
-            #print(check_timestep)
-        if condition:
-            alive = self.asw_process is not None and self.asw_process.poll() is None
-            raise NameError(f"Filename takes too much time to write (ASWING)! (waited {timeout:g} s for "
-                            f"{filename}; ASWING process {'still running' if alive else 'not running'})")
+        self.kill()
+        raise ASWINGHangError(f"{filename!r} not complete after {timeout:g} s (ASWING killed).")
 
-        return ''.join(a), ''.join(b), time.time()-internal_start_time
+    def write_point_file(self, filename, timeout=None, end_marker="ENDEDPRINTINGSTATES"):
+        """OPER menu: write the current point to `filename` ("W <file>") and return the time taken.
+        The previous file is deleted first, so ASWING asks no overwrite question."""
+        t0 = time.time()
+        if os.path.exists(filename):
+            os.remove(filename)
+        if self.sync == "prompt":
+            self.send_command_and_receive("W " + filename, timeout=self.write_timeout if timeout is None else timeout)
+            if not os.path.exists(filename) or not self._ends_with(filename, end_marker):
+                raise RuntimeError(f"Point file {filename!r} missing or incomplete after 'W'. "
+                                   f"Output:\n{self.last_output[-1500:]}")
+        else:
+            self.send_command_and_receive("W")
+            self.send_writefile_command_and_receive(filename, end_marker=end_marker, timeout=timeout)
+        return time.time() - t0
+
+    def march(self, Dt, nsteps, control_file=None, append=True, timeout=None):
+        """OPER (unsteady) menu: march `nsteps` time steps of `Dt` ("x [file]", then "Dt [-]n").
+        Returns ASWING's output of the march."""
+        x = "x" if not control_file else "x " + control_file
+        n = f"-{int(nsteps)}" if append else f"{int(nsteps)}"
+        step = f"{float(Dt)!r} {n}"
+        tmo = self.write_timeout if timeout is None else timeout
+        if self.sync == "prompt":
+            o1, _ = self.send_command_and_receive(x, expect=MARCH_QUESTION_RE, timeout=tmo)
+            o2, _ = self.send_command_and_receive(step, timeout=tmo)
+            return o1 + o2
+        o1, _ = self.send_command_and_receive(x)
+        o2, _ = self.send_command_and_receive(step)
+        return o1 + o2
 
     @staticmethod
     def _ends_with(filename, marker, tail_bytes=256):
@@ -353,116 +438,42 @@ class Aswing_Director:
         except OSError:
             return False
 
-    def send_writefile_command_and_receive(self, filename, custom_timer=None, append_or_overwrite=None):
-        internal_start_time = time.time()
-        tt = custom_timer
-        timeout = 99999  # seconds
-
-        # ── inotify path: wake up exactly when ASWING closes the file ──
-        # The watch MUST be armed before the commands below are sent: if it
-        # were armed afterwards, a fast enough write (ASWING opens, writes,
-        # and closes the file before add_watch() below has even run) fires
-        # and is gone before anything is listening for it, and the read()
-        # loop then blocks for the full `timeout` with no way to recover --
-        # this was previously the case here and caused exactly that hang
-        # under load (several concurrent ASWING instances competing for CPU
-        # made the race far more likely to actually lose).
-        watch_dir  = os.path.dirname(os.path.abspath(filename))
-        watch_name = os.path.basename(filename)
-
-        inotify = inotify_simple.INotify()
-        wd = inotify.add_watch(watch_dir, inotify_simple.flags.CLOSE_WRITE)
-        try:
-            a, b = self.send_command_and_receive(filename, custom_timer=tt)
-
-            if append_or_overwrite:
-                c, d = self.send_command_and_receive(append_or_overwrite, custom_timer=tt)
-                a, b = a + c, b + d
-
-            deadline = time.time() + timeout
-            while time.time() < deadline:
-                ms_left = max(1, int((deadline - time.time()) * 1000))
-                for event in inotify.read(timeout=ms_left):
-                    if event.name == watch_name:
-                        if os.stat(filename).st_size > 0:
-                            return ''.join(a), ''.join(b), time.time() - internal_start_time
-        finally:
-            inotify.rm_watch(wd)
-            inotify.close()
-
-    def Load_Files_ASW(self,filename):
-        """
-        From the main ASWING menu, this function loads the file called "filename", 
-        according to its extension. When using ASWING from the terminal, any file 
-        extension can be loaded. Here the extension will make the difference
-
-        Args:
-            filename (string): filename to enter in ASWING from the main menu, including the extension
-        """
-
-        if filename.endswith(".asw"):
-            stdout, stderr = self.send_command_and_receive("load "+filename) #asw
-        elif filename.endswith(".pnt"):
-            stdout, stderr = self.send_command_and_receive("pget "+filename) # pnt
-        elif filename.endswith(".set"):
-            stdout, stderr = self.send_command_and_receive("sget "+filename) # set
-        elif filename.endswith(".state"):
-            stdout, stderr = self.send_command_and_receive("tget "+filename) # state
-        elif filename.endswith(".gust"):
-            stdout, stderr = self.send_command_and_receive("gget "+filename) # gust
-        else:
-            print("UNKNOWN FILENAME")
-            sys.exit()
-
+    def Load_Files_ASW(self, filename):
+        """Main menu: load a file by extension (.asw load, .pnt pget, .set sget, .state tget,
+        .gust gget, .con cget: an ASWING-native control law)."""
+        cmds = {".asw": "load ", ".pnt": "pget ", ".set": "sget ", ".state": "tget ", ".gust": "gget ",
+                ".con": "cget "}
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in cmds:
+            raise ValueError(f"Unknown file type: {filename}")
+        return self.send_command_and_receive(cmds[ext] + filename)
 
     def quit_and_close_aswing(self):
-        """
-        Send QUIT command to ASWING and closes the process.
-        """
-        self.send_command_and_receive("QUIT")
-        time.sleep(self.wait_time)
-        self.asw_process.stdin.close()
-        self.asw_process.stdout.close()
-        self.asw_process.stderr.close()
-        self.asw_process.wait()
+        """Send QUIT and wait for the process to end (killed after 10 s)."""
+        if self.is_alive():
+            try:
+                self._send("QUIT")
+            except ASWINGCrashError:
+                pass
+            try:
+                self.asw_process.wait(10)
+            except subprocess.TimeoutExpired:
+                self.kill()
+        for s in (self.asw_process.stdin,):
+            try:
+                s.close()
+            except Exception:
+                pass
         if self.print_output:
             print("ASWING is closed")
 
 
-
-if __name__=="__main__":
-    ### TUTORIAL ###
-    ASW_handler = Aswing_Director(aswing_path = None,aswing_alias = "aswing_stable")
-    print("A")
-    ASW_handler.start_aswing(filename="test_files/test_aircraft/wingloop_test_aircraft",print_output=True)
-    print("B")
-    # Send commands and print outputs
-    stdout, stderr = ASW_handler.send_command_and_receive("plot")
-    print(stdout)
-    print("C")
-    stdout, stderr = ASW_handler.send_command_and_receive("P")
-    print("D")
-    stdout, stderr = ASW_handler.send_command_and_receive("4")
-    print("E")
-    stdout, stderr = ASW_handler.send_command_and_receive("H")
-    print("F")
-    stdout, stderr = ASW_handler.send_command_and_receive("D")
-    print("G")
-    stdout, stderr = ASW_handler.send_command_and_receive("H")
-    print("H")
-    stdout, stderr = ASW_handler.send_command_and_receive("\n")
-    stdout, stderr = ASW_handler.send_command_and_receive("OPER")
-    stdout, stderr = ASW_handler.send_command_and_receive("!V 30")
-    stdout, stderr = ASW_handler.send_command_and_receive("%")
-    stdout, stderr = ASW_handler.send_command_and_receive("A")
-    stdout, stderr = ASW_handler.send_command_and_receive("D")
-    stdout, stderr = ASW_handler.send_command_and_receive("H")
-    stdout, stderr = ASW_handler.send_command_and_receive("x")
-    stdout, stderr = ASW_handler.send_command_and_receive("w")
-#    stdout, stderr = ASW_handler.send_command_and_receive("test")
-    stdout, stderr = ASW_handler.send_writefile_command_and_receive_old(filename = "test",append_or_overwrite="O")
-    stdout, stderr = ASW_handler.send_command_and_receive("\n")
-
-    print("I")
-    ASW_handler.quit_and_close_aswing()
-
+if __name__ == "__main__":
+    # Tutorial: start ASWING on the test aircraft, open OPER, and quit.
+    here = os.path.dirname(os.path.abspath(__file__))
+    asw = Aswing_Director(aswing_alias="aswing_stable")
+    asw.start_aswing(directory=os.path.join(here, "test_files", "test_aircraft"),
+                     filename="wingloop_test_aircraft", print_output=True)
+    asw.send_command_and_receive("OPER")
+    asw.send_command_and_receive("")
+    asw.quit_and_close_aswing()

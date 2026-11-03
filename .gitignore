@@ -53,4 +53,12 @@
 # ---------------------------
 .DS_Store
 Thumbs.db
-WingLoop_Library/__pycache__/PyControl_Plot.cpython-312.pyc
+
+# ---------------------------
+# WingLoop run artefacts
+# ---------------------------
+**/wingloop_v2_handshake.json*
+**/*_wlv2.slx
+**/results_v3/
+**/input_schedule
+.pytest_cache/

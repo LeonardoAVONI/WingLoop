@@ -1,13 +1,13 @@
-## WingLoop 2.0
+## WingLoop 3.0
 <div align="center">
   <img src="./docs/wingLoop_image.jpg" alt="WingLoop GUI during a simulation run" width="100%" />
 </div>
 
-**Author:** Leonardo Avoni  
+**Authors:** Leonardo Avoni; Matteo Alfonso Incarbone (Simulink V2)  
 **Contact:** avonileonardo@gmail.com  
-**Last Modified:** 10/03/2026  
-**Platform:** Ubuntu  
-**Tested with:** ASWING 5.98  
+**Last Modified:** 11/2026  
+**Platform:** Ubuntu (tested). Windows + WSL: provided for Simulink V2, **untested**  
+**Tested with:** ASWING 5.98 (stable build) and ASWING_Modified, MATLAB/Simulink R2025b
 
 ---
 
@@ -16,6 +16,26 @@
 WingLoop is a closed-loop control framework that extends the capabilities of [ASWING](https://web.mit.edu/drela/Public/web/aswing/), a structural and aerodynamic analysis tool for flexible aircraft. While ASWING natively supports only linear bi-scheduled controllers, WingLoop integrates ASWING with Python — and optionally MATLAB or Simulink — to enable arbitrary control laws, including nonlinear strategies.
 
 The simulation advances in a time-marching loop, either step by step or in chunks of *K* timesteps. Between iterations, the simulation state is passed to Python — and then to MATLAB or Simulink if needed — where the control laws are computed. The resulting control inputs are returned to ASWING for the next timestep, enabling closed-loop simulations with arbitrary controllers.
+
+### What is new in 3.0
+
+- **Speed.** WingLoop waits for ASWING's prompts instead of fixed timers and busy loops: with a Python
+  controller a step costs about the same as ASWING alone (see [Performance](#performance-results)), and no CPU
+  thread is spent spinning, which matters for parallel runs.
+- **Simulink V2** (method by M. A. Incarbone): the controller model runs as one continuous Simulink
+  simulation, exchanging data with WingLoop over TCP. Same model rules as the other Simulink backends, same
+  results, a few ms per step instead of hundreds.
+- **Data integrity.** Point files are checked for completeness, every point is recorded exactly once
+  (including retries), the time grid is complete (K·Dt … N·Dt, optionally t = 0) at full precision.
+- **Robustness.** A timeout on every ASWING command; a hung or crashed ASWING ends the run with a clear
+  status instead of blocking. Optional retry of non-converged steps (off by default: ASWING_Modified
+  sub-steps failed steps itself).
+- **Diagnostics and metadata** per step (convergence, Newton restarts, TSPLIT sub-steps, retries, every
+  command the controller returned) and per run (ASWING binary and hash, WingLoop commit, settings, wall time).
+- **Compact output** (`.npz`: about 3× smaller than V2's `.json.gz` for the full record, and read without
+  parsing text; `.json.gz` can still be written and read).
+- **Packaging.** `pip install -e .` in any environment; MATLAB and FMPy are optional.
+- Tests that need no ASWING, and a cross-check of all controller backends.
 
 ### Reference Publication
 
@@ -28,18 +48,68 @@ The simulation advances in a time-marching loop, either step by step or in chunk
 
 ## Installation
 
-From the `02_WingLoop` folder, run:
+From the repository root (the folder that contains `pyproject.toml`):
 
 ```bash
-pip install -e .
+pip install -e .                # core: numpy, matplotlib
+pip install -e .[fmu,test]      # optional: FMPy (.fmu controllers), pytest
 ```
 
-After installation, the following imports will be available:
+MATLAB, MATLAB-Simulink and Simulink V2 controllers also need the **MATLAB Engine API for Python**, whose
+version must match your MATLAB release (R2025b → 25.2):
+
+```bash
+pip install "matlabengine==25.2.*"
+```
+
+WingLoop needs an ASWING executable. Give its path (or its folder) to `Launch_ASWING(aswing_fullpath=...)`;
+a shell alias (`aswing_alias="aswing_stable"`, resolved through `bash`) works as a fallback.
+
+After installation:
 
 ```python
-from WingLoop_Library import Aswing_Director
-from WingLoop_Library import WingLoop
+from WingLoop_Library import WingLoop, Aswing_Director, import_data_dict
 ```
+
+`import WingLoop_Library` does not import MATLAB, FMPy or matplotlib; each is loaded only when used.
+
+---
+
+## Quick start
+
+```python
+from WingLoop_Library import WingLoop
+
+WL = WingLoop()
+WL.Launch_WingLoop_Control("python_controller", "python_test_controller.py", timestep=0.01)
+WL.Launch_ASWING(aswing_fullpath="/path/to/ASWING/bin/aswing", sim_directory="aswing_geometry",
+                 asw_filename="wingloop_test_aircraft.asw")
+WL.Deactivate_Graphics()
+for f in ["01_1minus_cosine.gust", "wingloop_test_aircraft.pnt", "wingloop_test_aircraft.set",
+          "wingloop_test_aircraft.state"]:
+    WL.Load_Files(f)
+converged = WL.Time_Transient_Simulation(Dt=0.01, N=300, K=1)
+WL.Outputting_The_Results("my_run")          # my_run.npz
+WL.Closing_WingLoop()
+```
+
+Main options of `Time_Transient_Simulation`:
+
+| option | default | meaning |
+|---|---|---|
+| `K` | 1 | steps per controller call (one record per chunk) |
+| `record_initial` | False | also record the initial point at t = 0 |
+| `stop_if_notconverged` | True | stop at the first non-converged step |
+| `stop_callback` | None | `f(wingloop) -> bool`, after every chunk |
+| `stop_condition` | None | `f(channels) -> bool` on the latest named values (`channels["Alpha"]`, …) |
+| `retry_substeps` | 0 (off) | n > 1: re-march a non-converged chunk once in n·K steps of Dt/n |
+| `aero_flags` | None | e.g. `{"freeze_vl": True, "lag": False}`: set and read back ASWING's k-menu flags |
+
+`WL.sim_status` tells how the run ended (`completed`, `stopped: not converged at step k`, `hung at step k: …`,
+`crashed at step k: …`). Other `WingLoop` features: `Launch_ASWING(write_timeout=..., input_filename=...,
+output_filename=...)` (timeouts; per-instance exchange files for parallel runs), `Set_Aero_Flags`,
+`Configure_Atmosphere_Update` (altitude-dependent atmosphere, M. A. Incarbone), `Configure_Recording`
+(choice of recorded ASWING variables), `InitializePlot` (live plot; off unless asked).
 
 ---
 
@@ -47,79 +117,115 @@ from WingLoop_Library import WingLoop
 
 ```
 WingLoop_Library/
-├── Aswing_Director.py          # Communicates with ASWING (sends commands)
 ├── WingLoop.py                 # Main loop director — orchestrates the full WingLoop execution
-├── PyControl.py                # Handles control logic: receives states and dispatches to control laws
-├── PyControl_IO.py             # Reads ASWING state files; writes control input files for ASWING
+├── Aswing_Director.py          # Drives the ASWING process (prompt-synchronised commands, timeouts)
+├── PyControl.py                # Controller backends: Python, MATLAB, Simulink V1, FMU, Simulink V2
+├── SimulinkV2.py               # Simulink V2: Python side (TCP server)
+├── simulink_v2/                # Simulink V2: MATLAB side
+│   ├── AswingPlant.m           #   plant block (MATLAB System) exchanging data with WingLoop
+│   ├── wingloop_v2_make_model.m#   builds <model>_wlv2.slx from a WingLoop controller model
+│   ├── wingloop_v2_run.m       #   runs the simulation (called by WingLoop, or by the launcher)
+│   └── wingloop_v2_windows_launcher.m  # MATLAB on Windows + WingLoop in WSL (untested)
+├── PyControl_IO.py             # Reads ASWING point files; writes control files; .npz/.json output
 ├── PyControl_Plot.py           # Real-time and post-run plotting utilities
+├── ASW_Helpers.py              # Videos, stroboscopic images, timeseries plots
 ├── PyControl_additional.py     # Legacy code from earlier WingLoop versions
-├── __init__.py
-│
-├── test_files/
-│   ├── readme
-│   ├── test_aircraft/
-│   ├── test_controllers/
-│   │   ├── matlab/
-│   │   ├── python/
-│   │   ├── simulink/
-│   └── test_output/
-│
+├── test_files/                 # small fixtures (test aircraft, controllers, point files)
 └── wingloop_testrun/
-    ├── results/                # containing PID testing results
+    ├── wingloop_testrun.py     # one run of the test case, any backend
+    ├── run_all_backends.py     # all backends + cross-check report
     ├── aswing_geometry/
-    ├── matlab_controller/
-    ├── python_controller/
-    ├── simulink_controller/
-    └── wingloop_testrun.py
+    ├── python_controller/  matlab_controller/  simulink_controller/
+    └── results/                # V2 PID validation results
+tests/                          # pytest suite (fake ASWING, no ASWING needed)
 ```
-
----
-
-## Library Components
-
-| Module | Description |
-|---|---|
-| `WingLoop.py` | Top-level director of the WingLoop execution loop |
-| `Aswing_Director.py` | Interface to ASWING; sends commands to the simulator |
-| `PyControl.py` | Receives aircraft states from ASWING and dispatches to control laws (Python, MATLAB, Simulink) |
-| `PyControl_IO.py` | I/O utilities: reads ASWING state files, writes control input files |
-| `PyControl_Plot.py` | Plotting utilities for real-time monitoring and post-run analysis |
-| `PyControl_additional.py` | Legacy utilities from earlier versions |
-
-Further details on each module are available in the header of the respective source file. Individual modules can also be run and tested independently via their `__main__` block.
 
 ---
 
 ## Supported Controller Types
 
-- **Python** — native Python control laws
-- **MATLAB** — via MATLAB's Python API
-- **Simulink** — via FMU export or MATLAB/Simulink API
+The extension of the controller file selects the backend. Every backend receives the full ASWING state
+vector at each controller step and returns `{"F1": .., "E1": .., ...}` (flaps F1–F20, engines E1–E20).
+
+| backend | file | selected by | needs |
+|---|---|---|---|
+| Python | `UserController` class in a `.py` | `.py` | — |
+| MATLAB | `UserController.m` (classdef) | `.m` | MATLAB Engine |
+| Simulink V1 | `.slx`, one `sim()` per step | `.slx` | MATLAB Engine, Simulink |
+| Simulink FMU | `.fmu` (FMI 2.0 co-simulation) | `.fmu` (`rebuild_fmu_file=True` re-exports it from the `.slx`) | FMPy (+ Simulink Coder to re-export) |
+| **Simulink V2** | `.slx`, one `sim()` for the whole run | `.slx` + `simulink_mode="v2"` | MATLAB Engine, Simulink |
+
+A Python `UserController.step` may take a third argument, `channels`: the named ASWING values of the same
+state (`channels["Alpha"]`, `channels["Time"]`, `channels["VIAS"]`, …). Keys a controller returns that are not
+ASWING commands (e.g. `"recovery": 1`) are recorded (`cmd_recovery`) but not sent to ASWING.
+
+**Open-loop controllers (Python).** A `UserController` with `schedule(times) -> {name: array}` gets its
+commands for the whole run written once to an ASWING time-history file (one row per step). If it also has
+`takeover(channels) -> bool`, WingLoop checks it after every step and, from the first `True`, calls `step()`
+every chunk (closed loop), e.g. for a recovery controller. The check is made at every step, so no step needs
+to be rolled back.
+
+**Timing.** The command applied over [t_k, t_k + K·Dt] is computed from the state at t_k, from t_0 on, for every
+backend. ASWING's own controller acts inside each step, so it leads WingLoop by one step (see TestRun).
+
+---
+
+## Simulink V2
+
+Simulink V1 calls `sim()` once per WingLoop step; each call goes through Simulink's full start-up, which makes
+it about ten times slower than ASWING itself. Simulink V2 (method by Matteo Alfonso Incarbone) runs the
+controller model in **one** `sim()` for the whole run: the ASWING aircraft is a MATLAB System block,
+`AswingPlant`, which at every Simulink step receives the ASWING state from WingLoop and sends back the command
+computed by the controller.
+
+You write the same model as for Simulink V1 and the FMU (see the rules below). WingLoop builds a wrapper,
+`<model>_wlv2.slx`, in which `statein` is driven by `AswingPlant` and the command Outports feed it, and
+rebuilds it when the model changes. `AswingPlant` has no direct feedthrough, so the controller sees the state
+y_k at Simulink time t_k and its command u_k goes to ASWING for the next step: exactly the timing of the other
+backends, without an algebraic loop.
+
+```python
+WL.Launch_WingLoop_Control("simulink_controller", "simulink_test_controller.slx", timestep=Dt,
+                           simulink_mode="v2")
+```
+
+The model is built and compiled at the first controller step (it needs the state length); this takes
+about 30 s and is reported as start-up. Data go over a local TCP connection (a free port is chosen, so
+parallel runs do not collide).
+
+**Windows + WSL (untested).** With MATLAB on Windows and WingLoop/ASWING in WSL, WingLoop cannot start
+MATLAB. Use `simulink_launch="external"` and `simulink_handshake_file=...` in your WingLoop script, and start
+the run from MATLAB with `simulink_v2/wingloop_v2_windows_launcher.m`, which starts your script in WSL, waits for
+the handshake file and runs the simulation. This path is provided but has not been tested.
 
 ---
 
 ## WingLoop TestRun
 
-The `wingloop_testrun` case is designed to assess WingLoop's behavior and performance across all supported controller types. A simple PID controller is applied to the aircraft shown below, featuring 4 groups of control surfaces and two engines. The same controller is implemented in five different ways: Python, MATLAB, Simulink, compiled Simulink (FMU), and ASWING's native controller format. All ASWING-relevant files (trimming state, gust file, ASWING controller file, etc.) are located in the `aswing_geometry` folder.
+The `wingloop_testrun` case is designed to assess WingLoop's behavior and performance across all supported controller types. A simple PID controller is applied to the aircraft shown below, featuring 4 groups of control surfaces and two engines. The same controller is implemented in six different ways: Python, MATLAB, Simulink V1, compiled Simulink (FMU), Simulink V2, and ASWING's native controller format. All ASWING-relevant files (trimming state, gust file, ASWING controller file, etc.) are located in the `aswing_geometry` folder.
 
 <div align="center">
   <img src="./docs/wingloop_test_aircraft.png" alt="Test aircraft configuration" width="100%" />
   <p><em>Test aircraft configuration</em></p>
 </div>
 
-To run the test case:
+To run the test case (one backend), or every backend with the cross-check:
 
 ```bash
 cd WingLoop_Library/wingloop_testrun
-python wingloop_testrun.py
+python wingloop_testrun.py py            # py | mat | sim | fmu | fmu_rebuild | simv2 | fixed | native
+python run_all_backends.py               # writes results_v3/report.md and comparison.png
 ```
+
+`run_all_backends.py` runs each backend in its own process and its own copy of the case, and compares every
+backend with the Python run: commanded elevator, and every ASWING state relative to its range. A backend
+passes if the differences are at round-off level and it is not one step early or late. It exits with an
+error otherwise, so it can be used as a regression test.
 
 <div align="center">
   <img src="./docs/wingloop_test.png" alt="WingLoop GUI during a simulation run" width="100%" />
   <p><em>WingLoop GUI during a simulation run</em></p>
 </div>
-
-A sample `.json` output from a completed run is available [here](docs/wingloop_test_aircraft.json).
 
 > **Note on the ASWING-native case:** when using the ASWING built-in controller, WingLoop is bypassed entirely — the controller is integrated directly within the ASWING execution. Results are equivalent to the WingLoop cases, with the exception of a one-timestep lag inherent to the WingLoop coupling method.
 
@@ -131,59 +237,18 @@ The controller objective is to stabilize the aircraft in response to a 1-cosine 
 - Leveled, horizontal flight at $V_{\infty} = 30\ \mathrm{m/s}$
 - 1-cosine vertical gust (frozen-flow) applied as perturbation: distance to gust start −15 m, gust zero-to-peak distance 15 m, peak vertical velocity 3 m/s
 
-**Simulation parameters:** $N = 300$, $K = 1$, $\Delta t = 0.01\ \mathrm{s}$ — plot refresh every 1 s
+**Simulation parameters:** $N = 300$, $K = 1$, $\Delta t = 0.01\ \mathrm{s}$
 
 **PID gains:** $K_P = 100\ \mathrm{[deg/rad]}$, $K_I = 100\ \mathrm{[deg/(rad \cdot s)]}$, $K_D = 20\ \mathrm{[deg \cdot s/rad]}$
 
-### Test Machine
-
-Benchmarks were collected on the following machine, running only VSCode and ASWING in the background:
-
-| | |
-|---|---|
-| **Model** | Dell Inc. Precision 3581 |
-| **RAM** | 32.0 GiB |
-| **CPU** | 13th Gen Intel® Core™ i7-13800H × 20 |
-| **GPU** | NVIDIA Corporation / Mesa Intel® Graphics (RPL-P) |
-| **Storage** | 1.0 TB |
-| **OS** | Ubuntu 22.04.5 LTS |
-
-
-> Timing results are machine-dependent and will vary on different hardware.
-
 ### Performance Results
 
-Timing is split into two categories:
-
-- **Overhead time** — one-off startup cost (WingLoop initialisation, MATLAB engine startup, FMU compilation, etc.)
-- **Computational time** — wall-clock time to complete all $N$ iterations
-
-**Baseline — ASWING with native controller (no WingLoop):**
-
-| Overhead | Computational time |
-|---|---|
-| — | 10.70 s |
-
-**WingLoop results by controller type:**
-
-| Controller | Plot ON [s] | Δ Plot ON | Plot OFF [s] | Δ Plot OFF | Overhead [s] |
-|---|---|---|---|---|---|
-| Python                        | 15.01 | +40.3% | 11.73 |  +9.6% |  0.49 |
-| MATLAB                        | 15.94 | +49.0% | 12.92 | +20.7% |  2.95 |
-| Simulink (With GUI)                      | 138.0 | +1190% | 137.3 | +1183% | 18.58 |
-| Simulink (Without GUI)                      | 105.0 | +881% | 91.06 | +751% | 13.51 |
-| Simulink FMU (recompiled then run)     | 14.64 | +36.8% | 11.98 | +12.0% | 26.50 |
-| Simulink FMU (non-recompiled then run) | 14.88 | +39.1% | 11.87 | +10.9% |  0.53 |
-
-*Δ columns show computational time increase relative to the ASWING baseline (10.70 s). These are* ***not*** *official benchmarks — they give a rough sense of the relative cost of each integration approach. Since computational time scales linearly with* $N$*, the per-iteration cost can be estimated by dividing by* $N = 300$*.*
-
-> Note how Simulink FMU compilation takes overhead time, but allows faster simulink execution, very close to Python controller performance. Note also how updating the life WingLoop plots makes simulation slower.
-For speed advice: if the controller is simple, choose Python or Matlab. If you absolutely need Simulink, you can use the non-FMU version to check if the controller works as intended, and the compiled FMU for speed.
+BENCHMARK_SECTION
 
 ---
 ## Rules for Writing a Simulink Controller
 
-
+These rules apply to Simulink V1, the FMU and Simulink V2 alike.
 
 As a reference, the example controller in the `simulink_controller` folder demonstrates
 all of the above rules. Its block diagram is shown below. Note that this controller has no
@@ -194,8 +259,6 @@ interface.
   <img src="./docs/simulink_controller.png" alt="WingLoop GUI during a simulation run" width="100%" />
   <p><em>Block diagram of simulink_test_controller.slx.</em></p>
 </div>
-
-The following rules must be respected when writing a Simulink controller for WingLoop:
 
 **Solver settings** (Model Settings → Solver → Solver Selection):
 set the solver type to "Fixed-step" and the solver to "discrete (no continuous states)".
@@ -225,7 +288,12 @@ WingLoop, with no manual edits to the Simulink model required. This method does 
 the user from enforcing a value of `N` different from `Nfilter`.
 
 **Inputs:** place a single Inport block named `statein`. This receives the full WingLoop
-state vector at each timestep.
+state vector at each timestep. **New in 3.0:** set its port dimensions to `WL_NumStates`
+(and use `WL_NumStates` wherever the model needs the state length, e.g. the input port width
+of a Selector). WingLoop pushes `WL_NumStates` (the length of the ASWING state vector) to the
+MATLAB base workspace before the model is compiled: the length depends on the aircraft and on
+the ASWING build (the test aircraft has 1945 states with the build the V2 example models were
+made with, and 2040 with the current stable build).
 
 **Outputs:** for each control command, add both:
 - an Outport block, and
@@ -233,7 +301,8 @@ state vector at each timestep.
 
 using ASWING-compatible signal names (e.g. `F1`, `F2`, `E1`, `E15`). Both are required:
 the Outport is used by WingLoop to read the controller output, and the To Workspace block
-enables signal logging and inspection in the Simulink workspace.
+enables signal logging and inspection in the Simulink workspace. (Simulink V2 and the FMU read the Outports
+only.)
 
 **Workspace variables:** blocks that reference MATLAB workspace variables (gains, lookup
 tables, filter coefficients, etc.) do not need those variables to exist inside the `.slx`
@@ -243,9 +312,66 @@ constructor. WingLoop guarantees that `UserController.m` is executed before the 
 `sim()` call, so all variables will be available when Simulink runs.
 
 ---
+
+## Output data
+
+`Outputting_The_Results(name)` writes `name.npz` (default) or, with `fmt="json"`, the V2 `name.json.gz`.
+`import_data_dict(path)` reads both and returns the V2 layout:
+
+```python
+d = import_data_dict("my_run.npz")
+d["ModelVariables"]["Alpha"]["values"]   # one value per recorded step, d["ModelVariables"]["Alpha"]["unit"]
+d["ModelStates"]                          # (steps × states) array: the full ASWING state
+d["ModelParameters"], d["Metadata"]       # state block sizes; run settings, ASWING hash, WingLoop commit, status
+```
+
+Besides ASWING's global variables (`Time`, `earth X`, `Alpha`, `F1`…`E20`, `CL`, …), WingLoop records per
+step `IsConverged`, `NewtonRestarts`, `TSplits`, `Retried` (0 none, 1 retried and converged, 2 retried and
+not converged), `Time_ASWING` (ASWING's 4-decimal time; `Time` is k·Dt in full precision), `cmd_<name>` for
+every value the controller returned, and with ASWING_Modified `alpha_ref`, `beta_ref` (reference-point flow
+angles). In `.npz` the states are stored in single precision: ASWING computes in single precision and
+prints 9 significant digits, so float32 keeps exactly ASWING's values.
+
+---
+
+## Parallel runs
+
+Run each WingLoop in its own process (WingLoop changes the working directory), with its own case folder or
+its own exchange files (`Launch_ASWING(input_filename="input_w03", output_filename="output_w03")`). Resolve the
+ASWING path once in the main process and pass `aswing_fullpath` to the workers (resolving a shell alias in many
+processes at once can hang). WingLoop runs ASWING with single-threaded BLAS (`OMP_NUM_THREADS=1`, …). ASWING
+stores at most 10001 points, so one run is limited to 9997 steps.
+
+---
+
+## Upgrading from WingLoop 2.0
+
+- The first chunk is now controlled and recorded: records are at K·Dt, …, N·Dt (V2: the first chunk used the
+  trim controls and was not recorded, and the run ended at (N−1)·Dt). Controllers are called from t = 0.
+- `Outputting_The_Results` writes `.npz`; pass `fmt="json"` for `.json.gz`. `import_data_dict` reads both.
+- The retry of non-converged steps is off by default (`retry_substeps=10` restores V2's behaviour).
+- Simulink models: size `statein` with `WL_NumStates` (see the rules above).
+- `Launch_ASWING` defaults: `write_timeout=1200` s; `timer_text` is only used with `sync="timer"` (V2 mode).
+- `Performing_K_iterations_ASWING` was a V2 internal and is gone; use `Time_Transient_Simulation`.
+
+---
+
+## Tests
+
+```bash
+python -m pytest            # repository root; no ASWING or MATLAB needed
+```
+
+The suite drives a fake ASWING (`tests/fake_aswing.py`, which prints ASWING's prompts and writes real point
+files) to check the time grid, that no sample is lost or duplicated (also with retries), hang and crash
+handling, controller timing and command logging, open-loop schedules, k-menu flags, output files and the
+parser (truncated files, engines on several pylons). `run_all_backends.py` (above) is the end-to-end check with
+ASWING and MATLAB.
+
+---
 ## Multimedia Export
 
-The **Wingloop** module also includes several utilities for analyzing ASWING outputs, including video generation and stroboscopic image export. These post-processing functions are executed at the end of the `wingloop_testrun.py` script and are implemented in `ASW_Helpers.py`.
+The **Wingloop** module also includes several utilities for analyzing ASWING outputs, including video generation and stroboscopic image export (`ASW_Helpers.py`; video options by M. A. Incarbone). `python wingloop_testrun.py py --video` writes the `.state` file of the run and a video.
 
 <div align="center">
   <img src="./docs/plot_wingloop_test_aircraft.gif" alt="Flexible aircraft simulation video" width="100%" />
@@ -271,4 +397,4 @@ If you use WingLoop in academic work, please cite:
 > AIAA 2025-3425. AIAA AVIATION FORUM AND ASCEND 2025. July 2025.
 > https://arc.aiaa.org/doi/10.2514/6.2025-3425
 
-See [`LICENSE`](LICENSE) and [`CONTRIBUTING.md`](CONTRIBUTING.md) for full details.
+See [`LICENCE`](LICENCE), [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`CONTRIBUTORS.md`](CONTRIBUTORS.md).

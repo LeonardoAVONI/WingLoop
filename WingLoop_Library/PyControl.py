@@ -41,8 +41,12 @@ Supported controller backends:
 
     .py   → Python controller
     .m    → MATLAB controller (via matlab.engine)
-    .slx  → Simulink model stepped through the MATLAB engine
+    .slx  → Simulink V1: model stepped with one sim() call per step (MATLAB engine)
+    .slx + simulink_mode="v2" → Simulink V2: one sim() for the whole run, data over TCP
+            (SimulinkV2.py; method by Matteo Alfonso Incarbone). Same model rules as V1.
     .fmu  → FMU (FMI 2.0 Co-Simulation) exported from Simulink and executed via FMPy
+
+matlab.engine and fmpy are imported only by the backends that need them.
 
 All controller types share the same runtime interface, allowing WingLoop to
 interact with them in a consistent way.
@@ -176,12 +180,37 @@ import numpy as np
 import os
 import shutil
 import sys
+import inspect
 import warnings
 from importlib import import_module
 
-import matlab.engine
-import fmpy
-from fmpy import read_model_description, extract, instantiate_fmu
+# matlab.engine and fmpy are optional (pip extras "matlab" / "fmu") and imported only
+# by the backends that need them, so WingLoop imports in any Python environment.
+matlab = None
+
+
+def _import_matlab():
+    """Import matlab.engine on first use (needs the MATLAB Engine API for Python)."""
+    global matlab
+    if matlab is None:
+        try:
+            import matlab.engine as _engine  # noqa: F401  (binds the "matlab" package)
+            import matlab as _matlab
+        except ImportError as exc:
+            raise ImportError(
+                "This controller backend needs the MATLAB Engine API for Python. Install the "
+                "version matching your MATLAB release, e.g. `pip install matlabengine==25.2.*` "
+                "for R2025b (or `pip install -e .[matlab]`).") from exc
+        matlab = _matlab
+    return matlab
+
+
+def _import_fmpy():
+    try:
+        from fmpy import read_model_description, extract, instantiate_fmu
+    except ImportError as exc:
+        raise ImportError("The .fmu backend needs FMPy: `pip install fmpy` (or `pip install -e .[fmu]`).") from exc
+    return read_model_description, extract, instantiate_fmu
 
 # ──────────────────────────────────────────────────────────────────────────────
 # FMU helper
@@ -208,6 +237,7 @@ class SimulinkFMUController:
     """
 
     def __init__(self, fmu_path: str, Dt: float = 0.01):
+        read_model_description, extract, instantiate_fmu = _import_fmpy()
         self.fmu_path = fmu_path
         self.Dt       = Dt
         self.time     = 0.0
@@ -361,6 +391,10 @@ class PyControl:
         Dt:                float       = 0.01,
         rebuild_fmu:       bool        = False,
         show_simulink:     bool        = False,
+        simulink_mode:     str         = "v1",
+        simulink_launch:   str         = "engine",
+        simulink_port:     int         = 0,
+        simulink_handshake_file: str | None = None,
     ):
         # ── paths ──────────────────────────────────────────────────────
         self.control_directory = os.path.abspath(os.path.normpath(control_directory))
@@ -388,11 +422,20 @@ class PyControl:
 
         # ── method ─────────────────────────────────────────────────────
         ext = os.path.splitext(control_file)[1].lower()
-        method_map = {'.py': 'python', '.m': 'matlab', '.slx': 'simulink', '.fmu': 'simulink_fmu'}
+        method_map = {'.py': 'python', '.m': 'matlab', '.slx': 'simulink', '.fmu': 'simulink_fmu'}  # .slx + simulink_mode='v2' -> simulink_v2
         if ext not in method_map:
             raise ValueError(f"Unsupported extension '{ext}' in '{control_file}'")
         self.method = method_map[ext]
+        if simulink_mode not in ("v1", "v2"):
+            raise ValueError("simulink_mode must be 'v1' or 'v2'")
+        if self.method == 'simulink' and simulink_mode == "v2":
+            self.method = 'simulink_v2'
         self.control_model_name = os.path.splitext(control_file)[0]
+        self.simulink_launch = simulink_launch
+        self.simulink_port = simulink_port
+        self.simulink_handshake_file = simulink_handshake_file
+        self.v2_controller = None
+        self._step_takes_channels = False
 
         # ── state ──────────────────────────────────────────────────────
         self.Dt            = Dt
@@ -409,7 +452,8 @@ class PyControl:
         # simulink_fmu only needs the engine when rebuild_fmu=True (to re-export).
         # Without rebuild, the FMU runs standalone — no MATLAB required.
         needs_engine = self.method in ('matlab', 'simulink') or \
-                       (self.method == 'simulink_fmu' and self.rebuild_fmu)
+                       (self.method == 'simulink_fmu' and self.rebuild_fmu) or \
+                       (self.method == 'simulink_v2' and self.simulink_launch == "engine")
         if needs_engine:
             print(f"[PyControl] Starting MATLAB engine for method='{self.method}' …")
             if self.method == 'matlab':
@@ -421,7 +465,7 @@ class PyControl:
             else:
                 # Simulink headless: suppress desktop, keep JVM (Simulink requires it)
                 flags = "-nodesktop -nosplash"
-            self.eng = matlab.engine.start_matlab(flags)
+            self.eng = _import_matlab().engine.start_matlab(flags)
             self.eng.cd(self.control_directory, nargout=0)
             self.eng.addpath(self.control_directory, nargout=0)
 
@@ -480,10 +524,32 @@ class PyControl:
                 Dt       = self.Dt,
             )
 
+        # ── Simulink V2 (one sim() over TCP, started at the first step) ─
+        elif self.method == 'simulink_v2':
+            from .SimulinkV2 import SimulinkV2Controller
+            self.v2_controller = SimulinkV2Controller(
+                control_directory = self.control_directory,
+                model_name        = self.control_model_name,
+                Dt                = self.Dt,
+                eng               = self.eng,
+                launch            = self.simulink_launch,
+                port              = self.simulink_port,
+                handshake_file    = self.simulink_handshake_file,
+                show_simulink     = self.show_simulink,
+                precomputed_path  = self.precomputed_path or "",
+            )
+
         # ── Setup (load/compute UserController data) ───────────────────
         self._setup()
         
-        if self.method == 'simulink':
+        if self.method == 'python':
+            try:
+                params = inspect.signature(self.python_controller_instance.step).parameters
+                self._step_takes_channels = len(params) >= 3
+            except (TypeError, ValueError):
+                self._step_takes_channels = False
+
+        if self.method in ('simulink', 'simulink_v2') and self.eng is not None:
             self.eng.eval(f"assignin('base', 'Nfilter', {1.0 / self.Dt});", nargout=0)
             print(f"[PyControl] Nfilter = {1.0 / self.Dt:.4f} pushed to MATLAB base workspace (N·Dt = 1.0)")
 
@@ -527,7 +593,10 @@ class PyControl:
                 precomputed_file_path = self.precomputed_path or "",
             )
 
-        elif self.method in ('matlab', 'simulink'):
+        elif self.method == 'simulink_v2' and self.eng is None:
+            pass   # external launch: wingloop_v2_run instantiates UserController.m in MATLAB
+
+        elif self.method in ('matlab', 'simulink', 'simulink_v2'):
             # Instantiate MATLAB UserController (handles precomputed or default).
             # UserController.__init__ is responsible for pushing any variables it needs
             # into the MATLAB base workspace via assignin('base', ...) directly.
@@ -546,7 +615,9 @@ class PyControl:
                 # Push Nfilter before export so it gets baked into the FMU binary
                 self.eng.eval(f"assignin('base', 'Nfilter', {1.0 / self.Dt});", nargout=0)
                 print(f"[PyControl] Nfilter = {1.0 / self.Dt:.4f} pushed to base workspace for FMU export (N·Dt = 1.0)")
-                self._push_controller_to_fmu()   # triggers re-export + reload
+                # The export needs the state length (WL_NumStates), known at the first step:
+                # the re-export is done there (its time counts as start-up, see fmu_rebuild_time).
+                self._fmu_rebuild_pending = True
             else:
                 # FMU runs standalone — skip MATLAB entirely, use FMU as-is.
                 print(
@@ -644,7 +715,15 @@ class PyControl:
         print(f"[PyControl] FMU rebuilt and reloaded from: {new_fmu_path}")
 
     # ------------------------------------------------------------------
-    def PyControl_DoControllerStep(self, instantaneous_state, Dt: float | None = None) -> dict:
+    def prepare_run(self, n_calls: int):
+        """Called by WingLoop before a run with the number of controller steps (Simulink V2
+        uses it for the Simulink stop time; other backends ignore it)."""
+        if self.v2_controller is not None:
+            self.v2_controller.prepare_run(n_calls)
+
+    # ------------------------------------------------------------------
+    def PyControl_DoControllerStep(self, instantaneous_state, Dt: float | None = None,
+                                   channels: dict | None = None) -> dict:
         """
         Execute one control step and return the controller outputs.
 
@@ -658,6 +737,10 @@ class PyControl:
             Current plant state vector fed to the controller.
         Dt : float | None
             Timestep for this step in seconds.  If None, uses self.Dt.
+        channels : dict | None
+            Named ASWING channels of the same state ({"Time": .., "Alpha": .., "VIAS": ..}).
+            Passed to a Python UserController whose step() takes a third argument
+            (step(self, state, Dt, channels)); ignored by the other backends.
 
         Returns
         -------
@@ -669,12 +752,26 @@ class PyControl:
         """
         if Dt is None:
             Dt = self.Dt
+        if self.eng is not None and not getattr(self, "_numstates_pushed", False):
+            # model rule: size the "statein" Inport (and anything indexing it) with WL_NumStates
+            n = int(np.asarray(instantaneous_state).size)
+            self.eng.eval(f"assignin('base', 'WL_NumStates', {n});", nargout=0)
+            self._numstates_pushed = True
+        if getattr(self, "_fmu_rebuild_pending", False):
+            import time as _time
+            t0 = _time.time()
+            self._push_controller_to_fmu()
+            self.fmu_rebuild_time = _time.time() - t0
+            self._fmu_rebuild_pending = False
 
         # ── Python ────────────────────────────────────────────────────
         if self.method == 'python':
             if self.python_controller_instance is None:
                 raise RuntimeError("Python controller not initialized.")
-            output = self.python_controller_instance.step(instantaneous_state, Dt)
+            if self._step_takes_channels:
+                output = self.python_controller_instance.step(instantaneous_state, Dt, channels or {})
+            else:
+                output = self.python_controller_instance.step(instantaneous_state, Dt)
 
         # ── MATLAB ────────────────────────────────────────────────────
         elif self.method == 'matlab':
@@ -695,6 +792,10 @@ class PyControl:
         # ── Simulink (.slx) ───────────────────────────────────────────
         elif self.method == 'simulink':
             output = self._simulink_step(instantaneous_state, Dt)
+
+        # ── Simulink V2 (one sim(), TCP) ──────────────────────────────
+        elif self.method == 'simulink_v2':
+            output = self.v2_controller.step(instantaneous_state, Dt)
 
         else:
             raise ValueError(f"Unknown method: {self.method}")
@@ -795,6 +896,8 @@ class PyControl:
         """
         if self.fmu_controller:
             self.fmu_controller.terminate()
+        if self.v2_controller is not None:
+            self.v2_controller.terminate()
         if self.eng:
             if self.show_simulink:
                 # Leave MATLAB/Simulink window open for inspection.

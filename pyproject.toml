@@ -4,23 +4,33 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "WingLoop"
-version = "2.0.0"
-description = "WingLoop control and aircraft simulation tools for ASWING"
+version = "3.0.0"
+description = "WingLoop: closed-loop control of ASWING time-transient simulations (Python, MATLAB, Simulink, FMU)"
 readme = "README.md"
-requires-python = ">=3.8, <3.13"
-
+requires-python = ">=3.9"
 authors = [
-    { name="Leonardo Avoni" }
+    { name = "Leonardo Avoni", email = "avonileonardo@gmail.com" },
+    { name = "Matteo Alfonso Incarbone" },
 ]
-
+license = { text = "CC BY-NC-SA 4.0" }
 dependencies = [
     "numpy",
     "matplotlib",
-    "fmpy",
-    "inotify_simple",
-    "matlabengine"
 ]
+
+[project.optional-dependencies]
+# The MATLAB Engine API must match the installed MATLAB release, e.g.
+#   R2025b -> pip install "matlabengine==25.2.*"   (see README, "Installation")
+matlab = ["matlabengine"]
+fmu = ["fmpy"]
+test = ["pytest"]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["WingLoop_Library*"]
+
+[tool.setuptools.package-data]
+WingLoop_Library = ["simulink_v2/*.m", "icon/*.png"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
