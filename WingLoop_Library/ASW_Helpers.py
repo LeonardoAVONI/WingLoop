@@ -5,6 +5,7 @@ import shutil
 from WingLoop_Library import Aswing_Director
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.animation import FuncAnimation
 
 import subprocess
 import glob
@@ -17,6 +18,7 @@ __all__ = [
     "Generate_Analysis_Videos",
     "Generate_Strobe_Plot",
     "Plot_Timeseries",
+    "Create_Timeseries_GIF",
 ]
 
 
@@ -506,3 +508,102 @@ def Plot_Timeseries(filenames, indices, names, legend_names=None, use_iteration=
         
         plt.tight_layout()
         plt.show()
+        
+        
+def Create_Timeseries_GIF(filenames, indices, names, output_gif='timeseries.gif', 
+                          fps=30, num_frames=100, legend_names=None, use_iteration=False):
+    """
+    Creates an animated GIF of timeseries plots with a vertical red line tracking progress over time.
+    
+    Parameters:
+    -----------
+    output_gif : str
+        Filename for the output GIF (e.g., 'animation.gif').
+    fps : int
+        Frames per second for the saved GIF.
+    num_frames : int
+        Total number of frames in the animation.
+    """
+    if isinstance(filenames, str):
+        filenames = [filenames]
+        
+    if len(indices) != len(names):
+        raise ValueError("The 'indices' and 'names' lists must have the same length.")
+        
+    if legend_names is None:
+        legend_names = [os.path.basename(f) for f in filenames]
+
+    num_plots = len(indices)
+    
+    # ── LOAD AND PREPROCESS DATA ─────────────────────────────────────────────
+    # Load all data files ahead of time to determine common X-axis bounds
+    all_data = []
+    x_min, x_max = float('inf'), float('-inf')
+
+    for filename in filenames:
+        data = np.loadtxt(filename, comments='#')
+        x_col = 0 if use_iteration else 1
+        x_data = data[:, x_col]
+        x_min = min(x_min, x_data.min())
+        x_max = max(x_max, x_data.max())
+        all_data.append((x_data, data))
+
+    # X positions where the vertical red line will stop for each frame
+    frame_x_positions = np.linspace(x_min, x_max, num_frames)
+
+    # ── STYLING AND PLOT INITIALIZATION ──────────────────────────────────────
+    custom_style = {
+        "font.family":       "serif",
+        "font.size":         11,
+        "axes.labelsize":    12,
+        "legend.fontsize":   10,
+        "xtick.direction":   "in",
+        "ytick.direction":   "in",
+        "axes.grid":         True,
+        "grid.alpha":        0.3,
+        "grid.linestyle":    "--",
+    }
+    
+    with plt.style.context(custom_style):
+        fig, axes = plt.subplots(num_plots, 1, sharex=True, figsize=(10, 2 * num_plots))
+        if num_plots == 1:
+            axes = [axes]
+
+        # ── STATIC PLOTTING ──────────────────────────────────────────────────
+        for file_idx, (x_data, data) in enumerate(all_data):
+            for ax, idx, y_label in zip(axes, indices, names):
+                data_col_idx = idx + 1 
+                y_data = data[:, data_col_idx]
+                ax.plot(x_data, y_data, linewidth=1.5, label=legend_names[file_idx])
+                ax.set_ylabel(y_label)
+
+        # ── INITIALIZE VERTICAL TRACKER LINES ────────────────────────────────
+        vlines = []
+        for ax in axes:
+            for spine in ax.spines.values():
+                spine.set_edgecolor("#aaaaaa")
+            # Add vertical red line to each subplot
+            line = ax.axvline(x=frame_x_positions[0], color='red', linestyle='--', linewidth=1.5)
+            vlines.append(line)
+
+        if len(filenames) > 1:
+            axes[0].legend(loc="best", framealpha=0.9)
+
+        x_label = "Iteration Number [#]" if use_iteration else "Time $t$ [s]"
+        axes[-1].set_xlabel(x_label)
+        axes[-1].set_xlim(x_min, x_max)
+        plt.tight_layout()
+
+        # ── ANIMATION UPDATE FUNCTION ────────────────────────────────────────
+        def update(frame):
+            current_x = frame_x_positions[frame]
+            for line in vlines:
+                line.set_xdata([current_x, current_x])
+            return vlines
+
+        # Build and save animation
+        anim = FuncAnimation(fig, update, frames=num_frames, interval=1000/fps, blit=True)
+        anim.save(output_gif, writer='pillow', fps=fps)
+        plt.close(fig)
+        
+        print(f"Animation saved successfully to {output_gif}")
