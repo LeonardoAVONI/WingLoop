@@ -26,6 +26,14 @@ The script first re-trims the aircraft with this machine's ASWING and stops if t
 the reference (theta 4.6919 deg, F2 -4.639 deg, E1 2.746 N): a different ASWING build would change
 the test case. Live-plot windows open during the plot-on runs; do not use the machine meanwhile.
 
+## Check the results
+
+At the end the script writes `validation_check.pdf` (same layout as the thesis validation figure,
+grey band = wing inside the gust) with the reference runs made on the Dell 7550 dotted on top, and
+`validation_check.md` with the largest difference per run and channel. The curves should overlap:
+differences of about 1e-4 or less are round-off between machines; larger ones mean a different
+ASWING build, files or settings, so stop there before using the timings.
+
 ## Bring back
 
 Copy the whole output folder `results_bench/<host>_<date>/` (environment.json, runs.csv,

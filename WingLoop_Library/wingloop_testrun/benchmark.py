@@ -31,8 +31,11 @@ re-trim of the aircraft with this machine's ASWING build, which must give the re
 
 Output in DIR (default results_bench/<host>_<date>/): environment.json, runs.csv (one row
 per run: overhead, simulation time, ms/step and its split), summary.md (mean and std per
-configuration), timing_bars.pdf, and the result files of the first repeat (for the
-validation figures). Copy DIR back to the main machine.
+configuration), timing_bars.pdf, the result files of the first repeat, and validation_check.pdf,
+validation_check_error.pdf, validation_check.md: the time histories of the fixed, native, py and
+py_k10 runs in the layout of the thesis validation figure, with the 7550 reference runs
+(reference_7550_validation.npz) overlaid and their largest differences listed.
+Copy DIR back to the main machine.
 """
 
 import os
@@ -336,6 +339,12 @@ def main():
                         if f.startswith("result") or f.endswith((".state", ".pnt", ".set")):
                             os.remove(os.path.join(case, f))
     summarize(rows, out, env, a, fmu_export)
+    # time histories of the first repeat against the 7550 reference runs (validation_check.py)
+    try:
+        import validation_check
+        validation_check.check(os.path.join(out, "runs"), os.path.join(HERE, "reference_7550_validation.npz"), out)
+    except Exception as exc:                                       # noqa: BLE001
+        print("[benchmark] validation check skipped:", exc)
     print(f"\n[benchmark] done: {out}")
 
 
