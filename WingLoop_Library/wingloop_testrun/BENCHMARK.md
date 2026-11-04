@@ -34,6 +34,10 @@ grey band = wing inside the gust) with the reference runs made on the Dell 7550 
 differences of about 1e-4 or less are round-off between machines; larger ones mean a different
 ASWING build, files or settings, so stop there before using the timings.
 
+The same runs also give the thesis figures `Murua_validation.pdf` and `Murua_validation_error.pdf`
+(vector, thesis style, fixed stick / ASWING control / WingLoop K = 1 / K = 10 with the grey gust band),
+written by `make_murua_validation.py` into the output folder.
+
 ## Bring back
 
 Copy the whole output folder `results_bench/<host>_<date>/` (environment.json, runs.csv,

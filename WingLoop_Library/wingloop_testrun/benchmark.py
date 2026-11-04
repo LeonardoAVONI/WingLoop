@@ -34,7 +34,9 @@ per run: overhead, simulation time, ms/step and its split), summary.md (mean and
 configuration), timing_bars.pdf, the result files of the first repeat, and validation_check.pdf,
 validation_check_error.pdf, validation_check.md: the time histories of the fixed, native, py and
 py_k10 runs in the layout of the thesis validation figure, with the 7550 reference runs
-(reference_7550_validation.npz) overlaid and their largest differences listed.
+(reference_7550_validation.npz) overlaid and their largest differences listed; and the thesis
+figures Murua_validation.pdf, Murua_validation_error.pdf (make_murua_validation.py: fixed stick,
+ASWING control, WingLoop K = 1 and K = 10 only, in the thesis style).
 Copy DIR back to the main machine.
 """
 
@@ -345,6 +347,12 @@ def main():
         validation_check.check(os.path.join(out, "runs"), os.path.join(HERE, "reference_7550_validation.npz"), out)
     except Exception as exc:                                       # noqa: BLE001
         print("[benchmark] validation check skipped:", exc)
+    # the thesis figures Murua_validation.pdf / _error.pdf from the same runs (make_murua_validation.py)
+    try:
+        import make_murua_validation
+        make_murua_validation.make(os.path.join(out, "runs"), out)
+    except Exception as exc:                                       # noqa: BLE001
+        print("[benchmark] Murua validation figures skipped:", exc)
     print(f"\n[benchmark] done: {out}")
 
 
