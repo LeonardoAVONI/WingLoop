@@ -90,10 +90,11 @@ class UserController:
 
         self.simulationtime = 0.0
         
-        # PID gains on the pitch error [rad] -> F2 increment [deg]. Default: the V3 test case
-        # (Kp 100, Ki 100, Kd 20). wingloop_testrun.py --scenario writes the gains of the chosen
-        # scenario (Kp, Ki, Kd keys, already in deg/rad) into the controller config json.
-        Kp, Ki, Kd = (ref["Kp"], ref["Ki"], ref["Kd"]) if "Kp" in ref else (100.0, 100.0, 20.0)
+        # PID gains on the pitch error [rad] -> F2 increment [deg]. wingloop_testrun.py --scenario
+        # writes the chosen scenario's gains (Kp, Ki, Kd keys, in deg/rad) into the controller config
+        # json; without them, the v1_k1 gains (7, 30 1/s, 8 s in deg/deg) are used.
+        d2r = 180.0 / np.pi
+        Kp, Ki, Kd = (ref["Kp"], ref["Ki"], ref["Kd"]) if "Kp" in ref else (7.0 * d2r, 30.0 * d2r, 8.0 * d2r)
         self.PIDinstance = PIDController(Kp=Kp, Ki=Ki, Kd=Kd)
         print(f"[UserController] PID gains: Kp={Kp:.6g} Ki={Ki:.6g} Kd={Kd:.6g}")
 

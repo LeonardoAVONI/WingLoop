@@ -28,10 +28,10 @@ backend: py (default) | mat | sim (Simulink V1) | fmu (Simulink FMU, as committe
          sets the OPER constraint table to "f c l" (free flight, controls pinned, control law on))
 
 The same PID on pitch, acting on F2, is implemented by every backend; run_all_backends.py
-runs them all and compares the results. --scenario picks its gains (SCENARIOS below):
-    v3      Kp 100, Ki 100, Kd 20 deg/rad, K = 1 (default, the V3 cross-check)
-    v1_k1   Kp 7, Ki 30 1/s, Kd 8 s in deg/deg, K = 1 (thesis WingLoop 1.0 scenario)
-    v1_k10  Kp 2, Ki 0.5 1/s, Kd 0.5 s in deg/deg, K = 10 (same, controller every 10 steps)
+runs them all and compares the results. --scenario picks its gains (SCENARIOS below); the
+thesis WingLoop chapter uses v1_k1 for every run and v1_k10 only for the Python K = 10 run:
+    v1_k1   Kp 7, Ki 30 1/s, Kd 8 s in deg/deg, K = 1 (default)
+    v1_k10  Kp 2, Ki 0.5 1/s, Kd 0.5 s in deg/deg, K = 10 (controller every 10 steps)
 The gains are written, in deg/rad, into controller_config.json in the run folder (trim
 references + gains), which every backend's UserController reads; the native backend gets a
 .con file with the same gains (make_con).
@@ -67,7 +67,6 @@ BUILDS = {"stable": "aswing_stable", "modified": "aswing_modified"}     # build 
 # PID gains per scenario: (Kp, Ki, Kd, unit of the error) and the default K. "deg" gains act on
 # the pitch error in degrees; they are converted to deg/rad, the unit every backend uses.
 SCENARIOS = {
-    "v3":     {"gains": (100.0, 100.0, 20.0), "error_unit": "rad", "K": 1},
     "v1_k1":  {"gains": (7.0, 30.0, 8.0),     "error_unit": "deg", "K": 1},
     "v1_k10": {"gains": (2.0, 0.5, 0.5),      "error_unit": "deg", "K": 10},
 }
@@ -136,7 +135,7 @@ def _timed(obj, name, acc, key):
 
 
 def run(backend="py", aswing=None, aswing_alias=None, N=300, Dt=0.01, K=None,
-        sim_directory=None, out_name=None, plot=False, video=False, build="stable", scenario="v3"):
+        sim_directory=None, out_name=None, plot=False, video=False, build="stable", scenario="v1_k1"):
     """Run one backend; returns (result path, timings dict)."""
     t_first = time.time()
     aswing_alias = aswing_alias or BUILDS[build]
@@ -224,7 +223,7 @@ if __name__ == "__main__":
     ap.add_argument("--N", type=int, default=300)
     ap.add_argument("--Dt", type=float, default=0.01)
     ap.add_argument("--K", type=int, default=None, help="controller every K steps (default: the scenario's)")
-    ap.add_argument("--scenario", default="v3", choices=sorted(SCENARIOS), help="PID gains (see above)")
+    ap.add_argument("--scenario", default="v1_k1", choices=sorted(SCENARIOS), help="PID gains (see above)")
     ap.add_argument("--sim-directory", default=None)
     ap.add_argument("--out", default=None, help="result name (without extension)")
     ap.add_argument("--timings-json", default=None, help="write the timings to this JSON file")

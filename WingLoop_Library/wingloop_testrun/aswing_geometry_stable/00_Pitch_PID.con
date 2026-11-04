@@ -1,12 +1,14 @@
 # Kp=K, Ki=K/Ti, Kd=K*Td
-# Here we use Kp=100 deg/rad, Ki = 1000 deg/(s*rad), Kd = 20 deg*s/rad
-# the ASW control law takes the pitch [rad] and gives F2 [rad] also
+# Thesis WingLoop scenario v1_k1: Kp = 7, Ki = 30 1/s, Kd = 8 s. The ASWING control law maps the
+# pitch error to F2 in the same angle unit (deg/deg = rad/rad), so these are the gains as written
+# (the WingLoop backends use the same gains in deg/rad, i.e. x 180/pi). wingloop_testrun.make_con
+# uses this file as a template and writes 00_Pitch_PID_<scenario>.con with each scenario's gains.
 # Pitch proportional (P controller)
    2  8  0  -1           ! -1.0 Delta(2) is elevator,  KUELEV = 8 is Theta index
    1  1                   ! only one gain value will be used
    0.0                    ! par1 value doesn't matter for unscheduled gain
    0.0                    ! par2 value doesn't matter for unscheduled gain
-   100                   ! gain value Kp
+   7                   ! gain value Kp
 #
 
 # Pitch Integral (I controller)
@@ -14,13 +16,13 @@
    1  1                   ! only one gain value will be used
    0.0                    ! par1 value doesn't matter for unscheduled gain
    0.0                    ! par2 value doesn't matter for unscheduled gain
-   100                   ! gain value Ki
+   30                   ! gain value Ki
 
 # Pitch Derivative (D controller)
    2  5  0  -1           ! -1 Delta(2) is elevator,  KUROTY =  5 is Wy (since the other two euler angles are zero, this is theta_dot) (4 and 6 are for omega_x and omega_z).
    1  1                   ! only one gain value will be used
    0.0                    ! par1 value doesn't matter for unscheduled gain
    0.0                    ! par2 value doesn't matter for unscheduled gain
-   20                   ! gain value Kp
+   8                   ! gain value Kd
 #
 

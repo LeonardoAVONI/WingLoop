@@ -64,17 +64,20 @@ ASWING's own control law (`.con`) is active only after `%`, `l` in OPER (default
 WingLoop needs); the `native` backend uses `constraint_keys=["f", "c", "l"]`. The constraint-table prompt has
 no newline: `TABLE_PROMPT_RE`. Native is a reference only, not a pass/fail backend (ASWING applies its law
 inside the step). **Gain units (resolved 2026-11-04):** a `.con` gain maps the pitch error to F2 in the same
-angle unit (deg/deg = rad/rad), so the WingLoop deg/rad gains must be multiplied by pi/180; the committed
-`00_Pitch_PID.con` (100/100/20) is therefore 57.3x too stiff and is now only the template:
-`wingloop_testrun.make_con` writes `00_Pitch_PID_<scenario>.con` with converted gains. With them, native
-matches the Python PID within 0.03 deg of F2 (v1_k1).
+angle unit (deg/deg = rad/rad), so the WingLoop deg/rad gains must be multiplied by pi/180 (the former
+`00_Pitch_PID.con` with 100/100/20 was 57.3x too stiff). The committed `00_Pitch_PID.con` (now 7/30/8) is
+the template: `wingloop_testrun.make_con` writes `00_Pitch_PID_<scenario>.con` with converted gains. With
+them, native matches the Python PID within 0.03 deg of F2 (v1_k1).
 
-**Scenarios (2026-11-04):** `wingloop_testrun.py --scenario v3|v1_k1|v1_k10` (default v3 = 100/100/20 deg/rad,
-K 1; v1_k1 = thesis WingLoop 1.0 gains 7/30/8 deg/deg, K 1; v1_k10 = 2/0.5/0.5, K 10). The gains go, in
+**Scenarios (2026-11-04, user):** `wingloop_testrun.py --scenario v1_k1|v1_k10`. Every run uses v1_k1 (thesis
+WingLoop 1.0 gains 7/30/8 in deg/deg, K 1, the default), and v1_k10 (2/0.5/0.5, K 10) only for the Python
+K = 10 run, so the thesis chapter has one aircraft and one gain set. The former V3 gains 100/100/20 were removed. The gains go, in
 deg/rad, into `controller_config.json` (trim_reference.json + Kp, Ki, Kd) in the run folder, read by every
 backend's UserController; `run_all_backends.py --scenario` passes it on. With v1_k1, py/mat/sim/fmu/simv2 are
 bit-identical (stable build). `benchmark.py` (timing for the thesis, see `BENCHMARK.md`) and
-`convergence_study.py` (spatial/temporal convergence of the test aircraft) write to `results_bench/`,
+`convergence_study.py` (spatial/temporal convergence of the test aircraft; temporal: fixed stick through the
+test-scenario gust, pitch/WRBM/tip at their peaks, Z at 1.2 s, reference dt 0.005 s since 0.002 s fails a step
+on the stable build) write to `results_bench/`,
 `results_convergence/` (ignored). The stable `.pnt/.set/.state` were stale (the aircraft left its trim at
 -95 deg/s^2 of pitch acceleration in calm air) and were regenerated with `make_trim.py stable` on 2026-11-04;
 the modified ones hold their trim.

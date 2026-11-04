@@ -14,9 +14,13 @@ thesis WingLoop chapter (tab:wingloop_spatial_convergence, tab:wingloop_time_con
 spatial:  level-flight trim at 30 m/s (make_trim.py recipe, then the free-flight re-solve)
           with the structural node counts of every beam scaled by FACTORS (wing and
           tailplane kept even, so the root double node splits them symmetrically).
-temporal: fixed-stick WingLoop run from the trim (default mesh) through a 1-cosine gust
-          (type 5: entry at X = 0, H = 24 m, i.e. L_g = 48 m, 3 m/s) for DTS; values at
-          t = 0.7 s (the thesis table) and the peaks over the run.
+temporal: fixed-stick WingLoop run from the trim (default mesh) through the gust of the
+          test scenario (01_1minus_cosine.gust: type 5, entry 15 m ahead, H = 15 m, i.e.
+          L_g = 30 m, 3 m/s) for DTS; pitch, WRBM and tip deflection at their peaks (maximum
+          over the run: value and time), Z at T_Z = 1.2 s, just after the pitch peak and a
+          multiple of every dt (Z has no peak within the run: the aircraft keeps climbing; at
+          the pitch-peak time it varies with the sampled peak time, and its late values carry
+          the step-count drift of the stock ASWING build).
 Monitored: elevator F2, pitch theta, engine thrust E1, wing root bending moment (WRBM:
 moment component 1 of the wing node at y = 0, beam axes) and tip deflection (mean z of the
 two wing tips minus their jig z, 1.04189 m), plus the earth Z for the temporal study.
@@ -42,6 +46,7 @@ BEAMS = ["Wing", "Horizontal Stabilizer", "Vertical Stabilizer", "Fuselage"]
 DEFAULT_NODES = [48, 16, 12, 25]                  # structural nodes per beam (NODE menu, S)
 FACTORS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0]
 DTS = [0.1, 0.05, 0.02, 0.01, 1 / 120, 0.005, 0.002]
+T_Z = 1.2                                         # s, time at which Z is compared (temporal study)
 Z_TIP_JIG = 1.04189                               # jig z of the wing tips (sensor 2 of the .asw)
 TRIM = ["%", "f", "9 3", "17 1", "20 5", "23 32", "24 6", "d", "x", "W p_trim",
         "r", "%", "f", "c", ".", "d", "x", "W p_free"]
@@ -119,8 +124,6 @@ def temporal(exe, out, build, T):
         shutil.rmtree(case, ignore_errors=True)
         shutil.copytree(os.path.join(HERE, f"aswing_geometry_{build}"), case,
                         ignore=shutil.ignore_patterns("result*", "*.npz", "controller_config.json"))
-        with open(os.path.join(case, "01_1minus_cosine.gust"), "w") as f:
-            f.write(" 5\t! 1-cosine vertical gust\n 0\t! gust entry X\n 0\t! y slope\n 24\t! H\n 3\t! Wmax\n 0\n")
         tj = os.path.join(case, "timings.json")
         subprocess.run([sys.executable, os.path.join(HERE, "wingloop_testrun.py"), "fixed", "--build", build,
                         "--aswing", exe, "--N", str(N), "--Dt", repr(dt), "--sim-directory", case, "--out", "result",
@@ -135,19 +138,20 @@ def temporal(exe, out, build, T):
         L = np.array([loads(s[:18 * iitot].reshape(iitot, 18), DEFAULT_NODES[0]) for s in S])
         ser = {"Z": np.asarray(V["earth Z"]["values"], float), "theta": np.asarray(V["Elev."]["values"], float),
                "WRBM": L[:, 0], "tip": L[:, 1]}
-        i07 = int(np.argmin(np.abs(t - 0.7)))
         conv = np.asarray(V["IsConverged"]["values"][1:], bool)
-        row = {"dt": dt, "N": N, "t07": float(t[i07]), "all_converged": bool(conv.all()),
+        row = {"dt": dt, "N": N, "all_converged": bool(conv.all()),
                "first_unconverged_t": float(t[1:][~conv][0]) if (~conv).any() else None}
         for k, v in ser.items():
-            row[f"{k}_07"] = float(v[i07])
             row[f"{k}_max"], row[f"{k}_tmax"] = float(v.max()), float(t[v.argmax()])
             row[f"{k}_min"], row[f"{k}_tmin"] = float(v.min()), float(t[v.argmin()])
+        iz = int(np.argmin(np.abs(t - T_Z)))
+        row["Z_max"], row["Z_tmax"] = float(ser["Z"][iz]), float(t[iz])          # Z at T_Z (not a peak)
         np.savez(os.path.join(case, "series.npz"), t=t, **ser)
         rows.append(row)
-        print(f"[temporal] dt {dt:.5f}: at 0.7 s Z {row['Z_07']:.4f} theta {row['theta_07']:.4f} "
-              f"WRBM {row['WRBM_07']:.2f} tip {row['tip_07']:.4f}; WRBM max {row['WRBM_max']:.2f} at "
-              f"{row['WRBM_tmax']:.3f} s {'' if row['all_converged'] else 'NOT CONVERGED'}", flush=True)
+        print(f"[temporal] dt {dt:.5f}: peaks Z {row['Z_max']:.4f}@{row['Z_tmax']:.2f} theta "
+              f"{row['theta_max']:.4f}@{row['theta_tmax']:.2f} WRBM {row['WRBM_max']:.2f}@{row['WRBM_tmax']:.2f} "
+              f"tip {row['tip_max']:.4f}@{row['tip_tmax']:.2f} {'' if row['all_converged'] else 'NOT CONVERGED'}",
+              flush=True)
     return finish_temporal(rows)
 
 
@@ -155,17 +159,15 @@ def finish_temporal(rows):
     """Errors against the finest run whose every step converged (a failed step, e.g. at
     dt = 0.002 s on the stable build, corrupts the rest of that run)."""
     ref = [r for r in rows if r["all_converged"]][-1]
-    keys07 = ["Z_07", "theta_07", "WRBM_07", "tip_07"]
-    keyspk = ["theta_max", "theta_min", "WRBM_max", "WRBM_min", "tip_max", "tip_min"]
+    keys = ["Z_max", "theta_max", "WRBM_max", "tip_max"]
     for r in rows:
-        r["max_err_07_pct"] = max(abs(r[k] / ref[k] - 1) * 100 for k in keys07)
-        r["max_err_peaks_pct"] = (max(abs(r[k] / ref[k] - 1) * 100 for k in keyspk) if r["all_converged"]
-                                  else float("nan"))
-    lines = ["| dt [s] | steps to 0.7 s | Z [m] | pitch [deg] | WRBM [N m] | tip defl. [m] | max err (0.7 s) | "
-             "max err (peaks) |", "|---|---|---|---|---|---|---|---|"]
-    lines += [f"| {r['dt']:.5f} | {int(round(0.7 / r['dt']))} | {r['Z_07']:.4f} | {r['theta_07']:.4f} | "
-              f"{r['WRBM_07']:.3f} | {r['tip_07']:.4f} | {r['max_err_07_pct']:.2f} % | "
-              + (f"{r['max_err_peaks_pct']:.2f} % |" if r["all_converged"]
+        r["max_err_pct"] = max(abs(r[k] / ref[k] - 1) * 100 for k in keys) if r["all_converged"] else float("nan")
+    cell = lambda r, k, f: f"{r[k + '_max']:{f}} ({r[k + '_tmax']:.2f} s)"
+    lines = ["| dt [s] | steps | Z [m] | pitch [deg] | WRBM [N m] | tip defl. [m] | max err |",
+             "|---|---|---|---|---|---|---|"]
+    lines += [f"| {r['dt']:.5f} | {r['N']} | {cell(r, 'Z', '.4f')} | {cell(r, 'theta', '.4f')} | "
+              f"{cell(r, 'WRBM', '.2f')} | {cell(r, 'tip', '.4f')} | "
+              + (f"{r['max_err_pct']:.2f} % |" if r["all_converged"]
                  else f"step failed at t = {r['first_unconverged_t']:g} s |") for r in rows]
     lines += ["", f"Reference: dt = {ref['dt']:g} s (finest run with every step converged)."]
     return rows, lines

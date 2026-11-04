@@ -8,7 +8,7 @@
 Run the test case with every controller backend and check they give the same result.
 
     python run_all_backends.py [--build stable|modified|all] [--backends fixed,py,mat,sim,fmu_rebuild,fmu,simv2,native]
-                               [--scenario v3|v1_k1|v1_k10] [--aswing PATH] [--N 300] [--out results_v3]
+                               [--scenario v1_k1|v1_k10] [--aswing PATH] [--N 300] [--out results_v3]
 
 --scenario sets the PID gains and K of every backend (wingloop_testrun.py, SCENARIOS).
 
@@ -82,7 +82,7 @@ def main():
     ap.add_argument("--Dt", type=float, default=0.01)
     ap.add_argument("--out", default=os.path.join(HERE, "results_v3"))
     ap.add_argument("--reuse", action="store_true", help="only compare existing results")
-    ap.add_argument("--scenario", default="v3", help="PID gains and K (wingloop_testrun.py SCENARIOS)")
+    ap.add_argument("--scenario", default="v1_k1", help="PID gains and K (wingloop_testrun.py SCENARIOS)")
     a = ap.parse_args()
     backends = [b.strip() for b in a.backends.split(",") if b.strip()]
     # stable last: the .fmu left in simulink_controller/ is then the stable build's (the default)

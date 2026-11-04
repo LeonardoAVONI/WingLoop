@@ -111,10 +111,10 @@ classdef UserController < handle
 
             obj.simulationtime = 0.0;
 
-            % ── PID gains (mirror of Python: Kp=100, Ki=100, Kd=20) ──────
-            obj.Kp = 100.0;
-            obj.Ki = 100.0;
-            obj.Kd = 20.0;
+            % ── PID gains (mirror of Python) ─────────────────────────────
+            obj.Kp = 7.0*180.0/pi;    % v1_k1 gains (7, 30 1/s, 8 s in deg/deg), in deg/rad
+            obj.Ki = 30.0*180.0/pi;
+            obj.Kd = 8.0*180.0/pi;
             % wingloop_testrun.py --scenario: gains (deg/rad) in the controller config json
             if exist('ref', 'var') && isstruct(ref) && isfield(ref, 'Kp')
                 obj.Kp = ref.Kp;  obj.Ki = ref.Ki;  obj.Kd = ref.Kd;
