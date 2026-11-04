@@ -30,8 +30,9 @@ re-trim of the aircraft with this machine's ASWING build, which must give the re
 (else the run stops: a different build would change the case).
 
 Output in DIR (default results_bench/<host>_<date>/): environment.json, runs.csv (one row
-per run: overhead, simulation time, ms/step and its split), summary.md (mean and std per
-configuration), timing_bars.pdf, the result files of the first repeat, and validation_check.pdf,
+per run: overhead, simulation time, ms/step and its split), summary.md (mean and std of overhead
+and computation per configuration), timing_bars.pdf (overhead + computation + live-plot time of
+the thesis configurations; redraw with --replot DIR), the result files of the first repeat, and validation_check.pdf,
 validation_check_error.pdf, validation_check.md: the time histories of the fixed, native, py and
 py_k10 runs in the layout of the thesis validation figure, with the 7550 reference runs
 (reference_7550_validation.npz) overlaid and their largest differences listed; and the thesis
@@ -189,8 +190,7 @@ def summarize(rows, out, env, args, fmu_export):
              f"WingLoop {env['wingloop_git']}{' (modified files)' if env['wingloop_dirty'] else ''}.",
              f"Reference for the increase: ASWING alone with its own controller, {base_sim:.2f} s.",
              f"FMU export (one-off, before the repeats): {fmu_export:.1f} s." if fmu_export else "", "",
-             "| config | plot | n | overhead [s] | simulation [s] | increase | ms/step | ASWING | point I/O | "
-             "controller | plot | other |", "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+             "| config | plot | n | overhead [s] | computation [s] | increase | ms/step |", "|---|---|---|---|---|---|---|"]
     order = {c: i for i, c in enumerate(ALL)}
     table = []
     for (cfg, plot), g in sorted(groups.items(), key=lambda kv: (order.get(kv[0][0], 99), kv[0][1])):
@@ -200,13 +200,12 @@ def summarize(rows, out, env, args, fmu_export):
                  ("aswing_march_s", "read_point_s", "controller_s", "plot_s", "other_s")]
         inc = (sim[0] / base_sim - 1) * 100 if np.isfinite(base_sim) else float("nan")
         lines.append(f"| {cfg} | {'on' if plot else 'off'} | {len(g)} | {ov[0]:.2f} ± {ov[1]:.2f} | "
-                     f"{sim[0]:.2f} ± {sim[1]:.2f} | {inc:+.1f} % | {sim[0] / args.N * 1000:.1f} | "
-                     + " | ".join(f"{p:.1f}" for p in parts) + " |")
+                     f"{sim[0]:.2f} ± {sim[1]:.2f} | {inc:+.1f} % | {sim[0] / args.N * 1000:.1f} |")
         table.append({"config": cfg, "plot": plot, "n": len(g), "overhead_mean": ov[0], "overhead_std": ov[1],
                       "sim_mean": sim[0], "sim_std": sim[1], "increase_pct": inc,
                       "split_ms_per_step": dict(zip(["aswing", "point_io", "controller", "plot", "other"], parts))})
-    lines += ["", "Split columns: mean ms per step spent in the ASWING march, writing and parsing the point "
-              "file, the controller call, the live plot, and the rest of the WingLoop loop."]
+    lines += ["", "Overhead: start-up before the first step. Computation: the time-marching loop (increase and "
+              "ms/step refer to it). The per-step split of the loop is kept in runs.csv and summary.json."]
     with open(os.path.join(out, "summary.md"), "w") as f:
         f.write("\n".join(lines) + "\n")
     with open(os.path.join(out, "summary.json"), "w") as f:
@@ -218,26 +217,53 @@ def summarize(rows, out, env, args, fmu_export):
         print("bar plot skipped:", exc)
 
 
+# thesis timing figure: (config, label); Simulink V1 ("sim") is left out and discussed in the text
+BARS = [("aswing_fixed", "ASWING fixed-stick"), ("aswing_native", "ASWING control"), ("py", "WL Python"),
+        ("py_k10", "WL Python (K=10)"), ("mat", "WL MATLAB"), ("fmu", "WL Simulink FMU"),
+        ("simv2", "WL Simulink Mk2")]
+
+
 def bar_plot(table, path):
+    """Wall time of one run (N steps), stacked: overhead (start-up, before the first step) +
+    computation (the time-marching loop, live plot off) + the extra computation time with the live
+    plot on (plot-on minus plot-off mean, WingLoop configurations only). Error bars: std of the
+    computation time over the repeats (plot off, then plot on)."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    rows = [r for r in table]
-    labels = [f"{r['config']}{' (plot)' if r['plot'] else ''}" for r in rows]
-    keys = ["aswing", "point_io", "controller", "plot", "other"]
-    names = ["ASWING march", "point file I/O", "controller", "live plot", "other"]
-    fig, ax = plt.subplots(figsize=(8, 0.35 * len(rows) + 1.5))
-    left = np.zeros(len(rows))
-    for k, n in zip(keys, names):
-        v = np.array([max(r["split_ms_per_step"][k], 0.0) for r in rows])
-        ax.barh(labels, v, left=left, label=n)
-        left += v
-    ax.set_xscale("log")
-    ax.set_xlabel("wall time per step [ms] (log scale)")
+    plt.rcParams.update(matplotlib.rcParamsDefault)
+    plt.rcParams["pdf.fonttype"] = 42
+    T = {(r["config"], bool(r["plot"])): r for r in table}
+    bars = [(c, lab) for c, lab in BARS if (c, False) in T]
+    y = np.arange(len(bars))
+    ov = np.array([T[c, False]["overhead_mean"] for c, _ in bars])
+    comp = np.array([T[c, False]["sim_mean"] for c, _ in bars])
+    comp_sd = np.array([T[c, False]["sim_std"] for c, _ in bars])
+    on = [T.get((c, True)) for c, _ in bars]
+    live = np.array([max(r["sim_mean"] - cm, 0.0) if r else 0.0 for r, cm in zip(on, comp)])
+    live_sd = np.array([r["sim_std"] if r else 0.0 for r in on])
+    fig, ax = plt.subplots(figsize=(12.0, 0.55 * len(bars) + 1.4))
+    ax.barh(y, ov, color="C7", label="overhead")
+    ax.barh(y, comp, left=ov, color="C0", label="computation", xerr=comp_sd, capsize=3)
+    has = live > 0
+    ax.barh(y[has], live[has], left=(ov + comp)[has], color="C1", alpha=0.6, hatch="//",
+            label="live plot (added)", xerr=live_sd[has], capsize=3)
+    for k in range(len(bars)):
+        tot = ov[k] + comp[k] + live[k]
+        txt = f"{comp[k]:.2f} s" + (f" + {live[k]:.2f} s" if has[k] else "") + f"  (overhead {ov[k]:.2f} s)"
+        ax.text(tot + 0.01 * (ov + comp + live).max() + (live_sd[k] if has[k] else comp_sd[k]), y[k], txt,
+                va="center", fontsize=9)
+    ax.set_yticks(y, [lab for _, lab in bars])
     ax.invert_yaxis()
-    ax.legend(fontsize=8, loc="lower right")
+    ax.set_xlim(0, 1.3 * (ov + comp + live).max())
+    ax.set_xlabel("Wall time of the run [s]")
+    ax.grid(True, axis="x")
+    ax.set_axisbelow(True)
+    ax.legend(loc="upper right")
     fig.tight_layout()
     fig.savefig(path)
+    plt.close(fig)
+    print(f"[benchmark] wrote {path}")
 
 
 # ----------------------------------------------------------------------------- main
@@ -255,7 +281,12 @@ def main():
     ap.add_argument("--force", action="store_true", help="run despite machine-check warnings or a trim mismatch")
     ap.add_argument("--quick", action="store_true", help="1 repeat, N = 50: a smoke test of the script")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--replot", metavar="DIR", default=None,
+                    help="only redraw DIR/timing_bars.pdf from DIR/summary.json (no runs)")
     a = ap.parse_args()
+    if a.replot:
+        bar_plot(json.load(open(os.path.join(a.replot, "summary.json"))), os.path.join(a.replot, "timing_bars.pdf"))
+        return
     if a.quick:
         a.repeats, a.N = 1, 50
     configs = [c.strip() for c in a.configs.split(",") if c.strip()]

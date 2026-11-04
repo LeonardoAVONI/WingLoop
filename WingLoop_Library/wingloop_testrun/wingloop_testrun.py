@@ -32,6 +32,8 @@ runs them all and compares the results. --scenario picks its gains (SCENARIOS be
 thesis WingLoop chapter uses v1_k1 for every run and v1_k10 only for the Python K = 10 run:
     v1_k1   Kp 7, Ki 30 1/s, Kd 8 s in deg/deg, K = 1 (default)
     v1_k10  Kp 2, Ki 0.5 1/s, Kd 0.5 s in deg/deg, K = 10 (controller every 10 steps)
+    k10_tuned  Kp 3, Ki 5 1/s, Kd 1 s, K = 10: closer to K = 1 (Murua_validation.pdf); 4/5/2 and
+               higher diverge (the 0.1 s update cannot hold them)
 The gains are written, in deg/rad, into controller_config.json in the run folder (trim
 references + gains), which every backend's UserController reads; the native backend gets a
 .con file with the same gains (make_con).
@@ -69,6 +71,7 @@ BUILDS = {"stable": "aswing_stable", "modified": "aswing_modified"}     # build 
 SCENARIOS = {
     "v1_k1":  {"gains": (7.0, 30.0, 8.0),     "error_unit": "deg", "K": 1},
     "v1_k10": {"gains": (2.0, 0.5, 0.5),      "error_unit": "deg", "K": 10},
+    "k10_tuned": {"gains": (3.0, 5.0, 1.0),   "error_unit": "deg", "K": 10},   # 2026-11-04: best of 6 trials vs K = 1
 }
 CON_TEMPLATE = os.path.join(HERE, "aswing_geometry_stable", "00_Pitch_PID.con")
 

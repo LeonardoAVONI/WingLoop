@@ -38,7 +38,7 @@ RUNS = [("fixed", "ASWING fixed-stick", dict(color="C0", marker="s", markevery=M
         ("native", "ASWING control", dict(color="C1", marker="x", markevery=MARKEVERY)),
         ("py", "WingLoop K=1", dict(color="C2")),
         ("py_k10", "WingLoop K=10", dict(color="C3", ls="--"))]
-PANELS = [("theta", r"$\theta$ [°]"), ("F2", "Elevator [°]"), ("int", r"$\int(\theta-\theta_c)dt$ [°s]"),
+PANELS = [("theta", r"Pitch $\theta$ [deg]"), ("F2", "Elevator F2 [deg]"), ("int", r"$\int(\theta-\theta_c)dt$ [°s]"),
           ("wrbm", "WRBM [Nm]"), ("tip", "Tip Deflection [m]")]
 
 
@@ -67,6 +67,7 @@ def make(runs_dir, out=None):
     ax[0].legend(loc="upper right")
     ax[-1].set_xlabel("Time (t)")
     fig.tight_layout()
+    fig.align_ylabels(ax)                                       # one x position for every label
     p1 = os.path.join(out, "Murua_validation.pdf")
     fig.savefig(p1)
     plt.close(fig)
@@ -81,6 +82,7 @@ def make(runs_dir, out=None):
             a.grid(True)
         ax[-1].set_xlabel("Time (t)")
         fig.tight_layout()
+        fig.align_ylabels(ax)
         p2 = os.path.join(out, "Murua_validation_error.pdf")
         fig.savefig(p2)
         plt.close(fig)
