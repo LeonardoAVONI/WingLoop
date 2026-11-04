@@ -1,0 +1,146 @@
+C--------------------------------------------------------------------
+C     Initializing routine for control-law routines.
+C     Called once when ASWING starts up, and possibly again 
+C     if interactively requested by user.
+C
+C     The intent is to fill the common block arrays in CONLAW.INC
+C     for subsequent use by CONLAW or other routines.
+C
+C     This version tries to read control-law matrices from file.
+C
+C  Input:
+C      FNAME    filename containing control-law matrices
+C      NSEN     max sensor index
+C
+C  Output: 
+C      CONSET     = T   if file read is successful, F otherwise.
+C      LDCON(d)   = T   if control  variable d will be active
+C      LUCON(u)   = T   if state    variable u will be required by CONLAW
+C      LQCON(q,S) = T   if sensor S variable q will be required by CONLAW
+C
+C      Note: The LDCON,LUCON,LQCON flags are used by ASWING to:
+C       * allot slots in the global equation system (for the integrators)
+C       * check for system-setup errors (used control variable not activated)
+C
+C- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+C     SUBR.CONTROL will compute the control residuals
+C
+C       R_i    =  f_i(U',Q')  +  D_i  -  Dspec_i(t)
+C
+C     where U' = U_j - Uspec_j(t), Q' = Q_j - Qspec_j(t)
+C
+C     This version of CONINI sets up the common block data 
+C     needed to evaluate the f(U',Q') function as a linear sum
+C     over all the U' and Q' variables:
+C
+C       f_i  =  sum_j [ g_ij U'_j ]  +  sum_j [ g_ij Q'_j ]
+C
+C     Each g_ij coefficient can be scheduled with up to 
+C     two operating parameters,
+C
+C       g_ij = g_ij(par1,par2)
+C
+C     evaluated via bilinear interpolation from a lookup table.
+C     The lookup table data is read from file FNAME (xxx.con),
+C     and placed in the common blocks in CONLAW.INC.
+C
+C     The file has an arbitrary number of table blocks, each block
+C     defining the table for one g_ij function.
+C
+C     Each block has the following format.  Blank lines, and lines
+C     beginning with ! or # or $ are ignored.
+C
+C#-------------------------------------------------------
+C   i  j  s  gfac          ! identifies which g_ij function is being defined
+C
+C   np1  np2               ! number of scheduling-parameter values
+C
+C   par1(1) par1(2) par1(3) . . .  par1(np1)            ! parameter 1 values
+C   par2(1) par2(2) par2(3) . . .         par2(np2)     ! parameter 2 values
+C
+C   g(1,1)   g(2,1)   g(3,1)   g(4,1)   . . .  g(np1,1)   ! table data
+C   g(1,2)   g(2,2)   g(3,2)   g(4,2)   . . .  g(np1,2)   
+C   g(1,3)   g(2,3)   g(3,3)   g(4,3)   . . .  g(np1,3)
+C   .        .        .        .        . . .  . 
+C   .        .        .        .        . . .  . 
+C   .        .        .        .        . . .  . 
+C   g(1,np2) g(2,np2) g(3,np2) g(4,np2) . . .  g(np1,np2)
+C#-------------------------------------------------------
+C
+C     The quantities are defined as follows.
+C     See SUBR.CONTROL header for i values to use for KD*
+C     See INDEXC.INC for j values to use for KU*, KQ*
+C
+C       i = 1..NDDIM   control variable D index KD*
+C       j = 1..NUDIM   state   variable U index KU*  (if s = 0)
+C       j = 1..NQDIM   sensor  variable Q index KQ*  (if s > 0)
+C       s = 1..NSEN    sensor index
+C       gfac = scale factor for all g values to follow
+C
+C       np1 = dimension 1 of table (number of par1 values)
+C       np2 = dimension 2 of table (number of par2 values)
+C
+C       par1(.)  par1 table values
+C       par2(.)  par2 table values
+C
+C       g(..)    gain values
+C
+C- - - - - - - - - - - - - - - - - - - - - - - - - - - -
+C     Table block example 1:
+C     Set gain for yaw damper, scheduled on true airspeed V.
+C     ( SUBR.CONTROL currently defines  par1 = V )
+C
+C   3  6  0  1.0           ! Delta(3) is rudder,  KUROTZ = 6 is Omega_z index
+C   5  1                   ! Five velocities will define g(V) scheduled gain
+C   30. 40. 50. 70. 90.    ! par1 values are velocities
+C   0.0                    ! par2 value doesn't matter here (since np2 = 1)
+C   1.00 0.87 0.77 0.65 0.58  ! gain values corresponding to par1 values
+C
+C- - - - - - - - - - - - - - - - - - - - - - - - - - - -
+C     Table block example 2:
+C     Set constant (unscheduled) gain for phugoid damper
+C
+C   2  8  0  1.0           ! Delta(2) is elevator,  KUELEV = 8 is Theta index
+C   1  1                   ! no scheduling... use only one par1,par2 value each
+C   0.0                    ! par1 value, doesn't matter if np1 = 1
+C   0.0                    ! par2 value, doesn't matter if np2 = 1
+C   0.4                    ! gain value
+C
+
+
+
+# Kp=K, Ki=K/Ti, Kd=K*Td
+# Here we use Kp=100 deg/rad, Ki = 1000 deg/(s*rad), Kd = 20 deg*s/rad
+# the ASW control law takes the pitch [rad] and gives F2 [rad] also
+# Pitch proportional (P controller)
+   2  8  0  -1           ! -1.0 Delta(2) is elevator,  KUELEV = 8 is Theta index
+   1  1                   ! only one gain value will be used
+   0.0                    ! par1 value doesn't matter for unscheduled gain
+   0.0                    ! par2 value doesn't matter for unscheduled gain
+   100                   ! gain value Kp
+#
+
+# Pitch Integral (I controller)
+   2  14  0  -1           ! -0.01 Delta(2) is elevator,  KUELDT = 14 is Int(Theta-Theta_commanded)dt index
+   1  1                   ! only one gain value will be used
+   0.0                    ! par1 value doesn't matter for unscheduled gain
+   0.0                    ! par2 value doesn't matter for unscheduled gain
+   100                   ! gain value Ki
+
+# Pitch Derivative (D controller)
+   2  5  0  -1           ! -1 Delta(2) is elevator,  KUROTY =  5 is Wy (since the other two euler angles are zero, this is theta_dot) (4 and 6 are for omega_x and omega_z).
+   1  1                   ! only one gain value will be used
+   0.0                    ! par1 value doesn't matter for unscheduled gain
+   0.0                    ! par2 value doesn't matter for unscheduled gain
+   20                   ! gain value Kp
+#
+
+
+
+This controller (content of 00_Pitch_PID.con) controls the elevator (2) using the information of KUELEV (theta, 8, expressed in radiants), KUELDT (integral of theta-theta_commanded, 14) and KUROTY (dthetadt, rad/s, 5)
+Kp = 100, Ki = 100, Kd = 20. The reference value for the proportional and integral value is the trimming point value;
+the PID is such that F2 [deg] = PID(theta [rad], dthetadt [rad/s], int_theta [rad*s])
+
+
+
+

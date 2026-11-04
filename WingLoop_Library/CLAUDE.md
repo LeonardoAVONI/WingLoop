@@ -44,12 +44,15 @@ python -m pytest tests/test_wingloop.py -k retry   # one test
 cd WingLoop_Library/wingloop_testrun
 python wingloop_testrun.py py --build stable       # one real run (py|mat|sim|fmu|fmu_rebuild|simv2|fixed|native)
 python run_all_backends.py                         # all backends, both builds (results_v3/<build>/report.md)
+python plot_backends.py                            # every backend's time histories on one figure per build
 python make_trim.py modified                       # re-trim an aircraft version (after an ASWING rebuild)
 ```
 
 `run_all_backends.py` is the regression check for anything touching the loop, the I/O or a backend: every
 backend implements the same PID, so Python, MATLAB, Simulink V1, FMU and Simulink V2 must agree to round-off
-(currently bit-identical) and the report flags a one-step lag. It needs ASWING (aliases `aswing_stable`,
+(bit-identical on both builds, 2026-11-03) and the report flags a one-step lag. Each backend runs in its
+own process on its own copy of the aircraft folder; the copy must keep `trim_reference.json` (a missing one
+is an error in `wingloop_testrun.py`). It needs ASWING (aliases `aswing_stable`,
 `aswing_modified`; ASWING_Modified also `ASWING_DB_DIR`) and MATLAB/Simulink with Simulink Coder (FMU export).
 
 Two aircraft versions, one per ASWING build: `aswing_geometry_stable/` and `aswing_geometry_modified/` (same
@@ -59,7 +62,9 @@ not TSAV, which crashes with one point) and writes `trim_reference.json`, which 
 read through `precomputed_filename`. The FMU bakes in one build's references: `fmu_rebuild` before `fmu`.
 ASWING's own control law (`.con`) is active only after `%`, `l` in OPER (default fixed stick, which is what
 WingLoop needs); the `native` backend uses `constraint_keys=["f", "c", "l"]`. The constraint-table prompt has
-no newline: `TABLE_PROMPT_RE`.
+no newline: `TABLE_PROMPT_RE`. Native is a reference only, not a pass/fail backend: `00_Pitch_PID.con` is not
+the same law as the WingLoop PID (it holds pitch nearly flat and moves F2 ~2x more; probably gain units,
+the `.con` works in rad). Unresolved; the user decides which behaviour is intended.
 
 Do not build ASWING yourself (its own repos say so); running it is fine.
 
@@ -136,6 +141,37 @@ they see: the first chunk is controlled and recorded (time grid K·Dt…N·Dt), 
 
 ### Repo hygiene
 
-`__pycache__/` and `slprj/` artifacts are tracked from V2 days; don't stage new copies. Run artefacts are
-ignored (`results_v3/`, `*_wlv2.slx`, handshake files). `ideas_from_20_folder.md` (repo root) is the
+Keep only what the code, the README or the tutorial/tests use (user rule, 2026-11-03); build caches
+(`__pycache__/`, `slprj/`, `*.slxc`) and run artefacts (`results_v3/`, `*_wlv2.slx*`, handshake files) are
+ignored, never commit them. `test_files/` is used by the modules' `__main__` demos. `ideas_from_20_folder.md` (repo root) is the
 requirements list V3 implements (items marked NOT_THIS excluded).
+
+## Current status (2026-11-03)
+
+Branch `v3` (pushed, last commit `b9ae0c4`); `main` is still V2. The 20_ project uses this checkout as an editable
+install, so its batches run whatever branch is checked out here (`git checkout main` for V2 behaviour).
+
+Verified:
+- `python -m pytest`: 22 tests pass (pytest is not installed in the conda envs; use a venv or `pip install -e .[test]`).
+- Modified aircraft, full cross-check (`results_v3/modified/`, not committed): Python, MATLAB, Simulink V1, FMU
+  (re-exported and as exported) and Simulink V2 bit-identical, no lag. ms/step: fixed 48.5, py 49.4, mat 50.3,
+  fmu 49.8, simv2 55.0 (+~37 s start-up), sim V1 512.9.
+- Stable aircraft: an earlier full run (before the two-aircraft split) was bit-identical for every backend
+  (`docs/cross_check_v3.md`); since the split only fixed/py/mat were rerun (the rest was stopped by the user).
+- V2 on the same machine and case: 64.1 ms/step (Python) vs 52.3 for V3 and 43.7 for ASWING alone.
+
+Open:
+- Rerun `python run_all_backends.py --build stable` to complete the stable cross-check, then
+  `python plot_backends.py`; refresh `docs/cross_check_v3.md` from `results_v3/` (it predates the split).
+- The committed `simulink_controller/simulink_test_controller.fmu` was last re-exported by the *modified* run, so
+  it carries the Modified trim references: `fmu` (no rebuild) on the stable aircraft will not match Python until
+  `fmu_rebuild --build stable` is run (run_all_backends does modified first, stable last for this reason).
+- `simulink_controller/simulink_test_controller.slxc` is tracked again (Simulink cache): remove it from git.
+- README: the paragraph after the benchmark table still says the native case "does not yet activate" the
+  control law; it is active now (`constraint_keys=["f", "c", "l"]`). Replace it with the finding below.
+- Native `.con` vs WingLoop PID differ a lot (native holds pitch flat, F2 swings ~2x): likely gain units in
+  `00_Pitch_PID.con` (rad). The user has to decide which is intended; native is reported, not pass/fail.
+- Fast-path rollback: the user asked for it; per-step `takeover()` was implemented instead (chunked marching
+  saves almost nothing). Confirm with the user if chunk rollback is still wanted.
+- Windows + WSL path for Simulink V2 (`wingloop_v2_windows_launcher.m`) is untested by design.
+- Not run: the 20_ project's `py_23_reference_check.py` on `v3` (compatibility with its batches).
