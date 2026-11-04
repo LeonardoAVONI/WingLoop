@@ -116,9 +116,9 @@ def spatial(exe, out):
     return rows, lines
 
 
-def temporal(exe, out, build, T):
+def temporal(exe, out, build, T, dts=None, newton_iters=None):
     rows = []
-    for dt in DTS:
+    for dt in (dts or DTS):
         N = int(round(T / dt))
         case = os.path.join(out, f"temporal_dt{dt:.5f}")
         shutil.rmtree(case, ignore_errors=True)
@@ -127,7 +127,8 @@ def temporal(exe, out, build, T):
         tj = os.path.join(case, "timings.json")
         subprocess.run([sys.executable, os.path.join(HERE, "wingloop_testrun.py"), "fixed", "--build", build,
                         "--aswing", exe, "--N", str(N), "--Dt", repr(dt), "--sim-directory", case, "--out", "result",
-                        "--timings-json", tj], cwd=HERE, stdout=open(os.path.join(case, "log"), "w"),
+                        "--timings-json", tj] + (["--newton-iters", str(newton_iters)] if newton_iters else []),
+                       cwd=HERE, stdout=open(os.path.join(case, "log"), "w"),
                        stderr=subprocess.STDOUT)
         from WingLoop_Library import import_data_dict
         d = import_data_dict(os.path.join(case, "result.npz"))
@@ -180,11 +181,15 @@ def main():
     ap.add_argument("--aswing", default=None)
     ap.add_argument("--out", default=os.path.join(HERE, "results_convergence"))
     ap.add_argument("--T", type=float, default=3.0, help="temporal: simulated time [s]")
+    ap.add_argument("--dts", default=None, help="temporal: comma list of time steps (default: DTS)")
+    ap.add_argument("--newton-iters", type=int, default=None, help="temporal: Newton iteration limit per step")
     a = ap.parse_args()
     from WingLoop_Library.Aswing_Director import resolve_aswing_executable
     exe = resolve_aswing_executable(a.aswing, None if a.aswing else ALIASES[a.build])
     os.makedirs(a.out, exist_ok=True)
-    rows, lines = spatial(exe, a.out) if a.study == "spatial" else temporal(exe, a.out, a.build, a.T)
+    dts = [float(x) for x in a.dts.split(",")] if a.dts else None
+    rows, lines = spatial(exe, a.out) if a.study == "spatial" else temporal(exe, a.out, a.build, a.T, dts,
+                                                                           a.newton_iters)
     head = [f"# {a.study} convergence, test aircraft ({a.build} build, `{exe}`)", "",
             "Errors relative to the finest case." + (" Default mesh: x1." if a.study == "spatial" else ""), ""]
     with open(os.path.join(a.out, f"{a.study}.md"), "w") as f:

@@ -135,7 +135,8 @@ def _timed(obj, name, acc, key):
 
 
 def run(backend="py", aswing=None, aswing_alias=None, N=300, Dt=0.01, K=None,
-        sim_directory=None, out_name=None, plot=False, video=False, build="stable", scenario="v1_k1"):
+        sim_directory=None, out_name=None, plot=False, video=False, build="stable", scenario="v1_k1",
+        newton_iters=None):
     """Run one backend; returns (result path, timings dict)."""
     t_first = time.time()
     aswing_alias = aswing_alias or BUILDS[build]
@@ -173,12 +174,14 @@ def run(backend="py", aswing=None, aswing_alias=None, N=300, Dt=0.01, K=None,
 
     t_start = time.time()
     converged = WL.Time_Transient_Simulation(Dt, N, K, record_initial=True,
+                                             aero_flags={"newton_iters": newton_iters} if newton_iters else None,
                                              constraint_keys=["f", "c", "l"] if backend == "native" else None)
     t_end = time.time()
     split = dict(split)          # freeze: the result export below calls the plot again
     WL.metadata["backend"] = backend
     WL.metadata["build"] = build
     WL.metadata["scenario"] = scenario
+    WL.metadata["newton_iters"] = newton_iters
     WL.metadata["pid_gains_deg_per_rad"] = list(scenario_gains(scenario))
     # one-off costs paid at the first controller step (they need the state length):
     # Simulink V2 model build + compile, FMU re-export. Reported as start-up, not per step.
@@ -223,6 +226,8 @@ if __name__ == "__main__":
     ap.add_argument("--N", type=int, default=300)
     ap.add_argument("--Dt", type=float, default=0.01)
     ap.add_argument("--K", type=int, default=None, help="controller every K steps (default: the scenario's)")
+    ap.add_argument("--newton-iters", type=int, default=None,
+                    help="Newton iteration limit per step (k menu I; default: the .set file's, 10)")
     ap.add_argument("--scenario", default="v1_k1", choices=sorted(SCENARIOS), help="PID gains (see above)")
     ap.add_argument("--sim-directory", default=None)
     ap.add_argument("--out", default=None, help="result name (without extension)")
@@ -231,7 +236,7 @@ if __name__ == "__main__":
     ap.add_argument("--video", action="store_true", help="also write a .state file and a video")
     a = ap.parse_args()
     path, timings = run(a.backend, a.aswing, a.alias, a.N, a.Dt, a.K, a.sim_directory, a.out, a.plot, a.video,
-                        build=a.build, scenario=a.scenario)
+                        build=a.build, scenario=a.scenario, newton_iters=a.newton_iters)
     timings["result"] = path
     if a.timings_json:
         with open(a.timings_json, "w") as f:
