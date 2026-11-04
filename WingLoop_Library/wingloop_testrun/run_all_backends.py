@@ -8,7 +8,9 @@
 Run the test case with every controller backend and check they give the same result.
 
     python run_all_backends.py [--build stable|modified|all] [--backends fixed,py,mat,sim,fmu_rebuild,fmu,simv2,native]
-                               [--aswing PATH] [--N 300] [--out results_v3]
+                               [--scenario v3|v1_k1|v1_k10] [--aswing PATH] [--N 300] [--out results_v3]
+
+--scenario sets the PID gains and K of every backend (wingloop_testrun.py, SCENARIOS).
 
 --build all (default) runs every backend on both aircraft versions (ASWING_Stable and
 ASWING_Modified), each in results_v3/<build>/, with one report per build. The FMU is
@@ -80,6 +82,7 @@ def main():
     ap.add_argument("--Dt", type=float, default=0.01)
     ap.add_argument("--out", default=os.path.join(HERE, "results_v3"))
     ap.add_argument("--reuse", action="store_true", help="only compare existing results")
+    ap.add_argument("--scenario", default="v3", help="PID gains and K (wingloop_testrun.py SCENARIOS)")
     a = ap.parse_args()
     backends = [b.strip() for b in a.backends.split(",") if b.strip()]
     # stable last: the .fmu left in simulink_controller/ is then the stable build's (the default)
@@ -118,7 +121,7 @@ def run_build(a, build, backends):
             print(f"\n===== {build}: {b} =====", flush=True)
             cmd = [sys.executable, os.path.join(HERE, "wingloop_testrun.py"), b, "--build", build, "--aswing", exe,
                    "--N", str(a.N), "--Dt", str(a.Dt), "--sim-directory", case, "--out", "result",
-                   "--timings-json", tj]
+                   "--timings-json", tj, "--scenario", a.scenario]
             with open(os.path.join(a.out, f"{b}.log"), "w") as log:
                 r = subprocess.run(cmd, cwd=HERE, stdout=log, stderr=subprocess.STDOUT)
             if r.returncode != 0:
@@ -156,7 +159,8 @@ def run_build(a, build, backends):
 
     base = timings.get("fixed", {}).get("ms_per_step")
     lines = [f"# WingLoop 3.0 backend cross-check: {build} aircraft", "",
-             f"Test aircraft (aswing_geometry_{build}), 1-cosine gust, N = {a.N}, Dt = {a.Dt} s, K = 1, "
+             f"Test aircraft (aswing_geometry_{build}), 1-cosine gust, scenario {a.scenario}, N = {a.N}, "
+             f"Dt = {a.Dt} s, K = {next(iter(timings.values()), {}).get('K', '?')}, "
              f"ASWING `{exe}`.",
              "Differences against the Python run. Timings: one run each, this machine.", "",
              "| backend | verdict | max dF2 [deg] | max dstate / range | shifted by 1 step | ms/step | "

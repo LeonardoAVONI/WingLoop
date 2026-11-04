@@ -1,12 +1,12 @@
 {
   "build": "stable",
-  "note": "trim of the original V2 test files (make_trim.py stable reproduces it: alpha = theta = 4.69194 deg, F2 = -4.638, E1 = E2 = 2.746)",
-  "V": 30.0,
-  "alpha_deg": 4.691941261291504,
-  "F2ref": -4.638,
+  "aswing": "/home/leonardo-avoni/Desktop/02_ASWING/ASWING_Stable/bin/aswing",
+  "V": 30.000001907348633,
+  "alpha_deg": 4.691961288452148,
+  "F2ref": -4.639,
   "E2ref": 2.746,
   "E1": 2.746,
   "E2": 2.746,
-  "Pitchref": 0.081889689,
-  "theta_deg": 4.691939353942871
+  "Pitchref": 0.08189003970155088,
+  "theta_deg": 4.691953659057617
 }

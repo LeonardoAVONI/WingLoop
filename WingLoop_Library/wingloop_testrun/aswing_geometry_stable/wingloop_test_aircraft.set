@@ -1,5 +1,5 @@
-         119          48          27          62          62          36          12           3           4
-   6.00000000       2.70000007E-02  0.500000000     -0.500000000      0.699999988    
+         119          48          28          62          62          36          12           3           4
+   6.00000000       2.70000007E-02  0.600000024     -0.600000024      0.699999988    
   -135.000000       20.0000000       0.00000000    
    1.00000000       1.00000000       1.25892544       10.0000000    
    10.0000000           10001
@@ -84,7 +84,7 @@
  F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F
  F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F
  F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F F
- F T T F T F T T F F F T F F F F F F F F F T F F F F T
+ F T F F F F F F F F F F F F F F F F F F F T T F F F F T
            0           0           0           0           0           0           0           0           0           0           0           0
            0
  F

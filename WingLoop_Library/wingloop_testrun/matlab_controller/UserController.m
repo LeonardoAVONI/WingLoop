@@ -120,6 +120,10 @@ classdef UserController < handle
             obj.Kp = 100.0;
             obj.Ki = 100.0;
             obj.Kd = 20.0;
+            % wingloop_testrun.py --scenario: gains (deg/rad) in the controller config json
+            if exist('ref', 'var') && isstruct(ref) && isfield(ref, 'Kp')
+                obj.Kp = ref.Kp;  obj.Ki = ref.Ki;  obj.Kd = ref.Kd;
+            end
 
             % ── PID state — all zeroed at construction ────────────────────
             obj.pid_previous_error    = 0.0;

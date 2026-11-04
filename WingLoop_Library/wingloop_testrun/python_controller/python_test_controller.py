@@ -73,6 +73,7 @@ class UserController:
 
         # trim references (ASWING_Stable test aircraft); a trim_reference.json overrides them
         self.F2ref, self.E2ref, self.Pitchref = -4.638, 2.7460, 0.081889689
+        ref = {}
         if precomputed_file_path and str(precomputed_file_path).endswith(".json") \
                 and os.path.isfile(precomputed_file_path):
             import json
@@ -89,8 +90,12 @@ class UserController:
 
         self.simulationtime = 0.0
         
-        #self.PIDinstance = PIDController(Kp=100.0, Ki=100, Kd=20)
-        self.PIDinstance = PIDController(Kp=100.0, Ki=100, Kd=20)
+        # PID gains on the pitch error [rad] -> F2 increment [deg]. Default: the V3 test case
+        # (Kp 100, Ki 100, Kd 20). wingloop_testrun.py --scenario writes the gains of the chosen
+        # scenario (Kp, Ki, Kd keys, already in deg/rad) into the controller config json.
+        Kp, Ki, Kd = (ref["Kp"], ref["Ki"], ref["Kd"]) if "Kp" in ref else (100.0, 100.0, 20.0)
+        self.PIDinstance = PIDController(Kp=Kp, Ki=Ki, Kd=Kd)
+        print(f"[UserController] PID gains: Kp={Kp:.6g} Ki={Ki:.6g} Kd={Kd:.6g}")
 
         #print("[UserController] Initialized with following values:")
         #print("     self.workspace_scalar_py:", self.workspace_scalar_py)

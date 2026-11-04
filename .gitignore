@@ -61,5 +61,9 @@ Thumbs.db
 **/*_wlv2.slx
 **/*_wlv2.slxc
 **/results_v3/
+**/results_bench/
+**/results_convergence/
+**/controller_config.json
+**/00_Pitch_PID_*.con
 **/input_schedule
 .pytest_cache/
